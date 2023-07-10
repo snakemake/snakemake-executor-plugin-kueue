@@ -1,13 +1,14 @@
 import os
 import shlex
 from collections import namedtuple
-from kubernetes import config, client
 
+from kubernetes import client, config
 from snakemake.common import async_lock, get_container_image
 from snakemake.exceptions import WorkflowError
 from snakemake.executors import ClusterExecutor, sleep
 from snakemake.logging import logger
 from snakemake.resources import DefaultResources
+
 import snakemake_executor_kueue.custom_resource as custom_resource
 
 # Make sure your cluster is running!
@@ -59,7 +60,9 @@ class KueueExecutor(ClusterExecutor):
         batch_api = client.BatchV1Api()
         for job in self.active_jobs:
             resp = batch_api.delete_namespaced_job(
-                name=job.crd.jobname, body=job.jobpsec, namespace=self.executor_args.namespace
+                name=job.crd.jobname,
+                body=job.jobpsec,
+                namespace=self.executor_args.namespace,
             )
             print(resp)
         self.shutdown()
@@ -120,7 +123,6 @@ class KueueExecutor(ClusterExecutor):
             args=command[1:],
             # TODO memory needs to be retrieved and set to string
             working_dir=self.workdir,
-
             # Don't pass local environment for now
             environment={},
         )

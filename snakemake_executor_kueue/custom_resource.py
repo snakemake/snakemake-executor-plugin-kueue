@@ -1,4 +1,3 @@
-import os
 from kubernetes import client
 
 
@@ -16,7 +15,7 @@ class KubernetesObject:
         """
         Derive the jobname from the associated job.
         """
-        return ("snakejob-%s-%s" % (self.job.name, self.job.jobid)).replace('_', '-')
+        return ("snakejob-%s-%s" % (self.job.name, self.job.jobid)).replace("_", "-")
 
 
 class BatchJob(KubernetesObject):
@@ -135,7 +134,7 @@ class FluxMiniCluster(KubernetesObject):
 
         container = models.MiniClusterContainer(
             command=command + " " + " ".join(args),
-            environment=environment,            
+            environment=environment,
             image=image,
             resources={
                 "limits": {
