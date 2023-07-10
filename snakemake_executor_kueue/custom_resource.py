@@ -1,4 +1,19 @@
-from kubernetes import client
+from enum import Enum
+
+from kubernetes import client, config
+from snakemake.logging import logger
+
+import snakemake_executor_kueue.utils as utils
+
+config.load_kube_config()
+
+
+class JobStatus(Enum):
+    ACTIVE = 1
+    FAILED = 3
+    READY = 2
+    SUCCEEDED = 4
+    UNKNOWN = 5
 
 
 class KubernetesObject:
@@ -9,9 +24,13 @@ class KubernetesObject:
     def __init__(self, job, executor_args):
         self.job = job
         self.executor_args = executor_args
+        self.jobname = None
+
+    def write_log(self, logfile):
+        pass
 
     @property
-    def jobname(self):
+    def jobprefix(self):
         """
         Derive the jobname from the associated job.
         """
@@ -23,6 +42,34 @@ class BatchJob(KubernetesObject):
     A default kubernetes batch job.
     """
 
+    def status(self):
+        """
+        Get the status of the batch job.
+
+        This should return one of four JobStatus. Note
+        that we likely need to tweak the logic here.
+        """
+        batch_api = client.BatchV1Api()
+
+        # This is providing the name, and namespace
+        job = batch_api.read_namespaced_job(self.jobname, self.executor_args.namespace)
+
+        # Any failure consider the job a failure
+        if job.status.failed != 0:
+            return JobStatus.FAILED
+
+        # Any jobs either active or ready, we aren't done yet
+        if job.status.active:
+            return JobStatus.ACTIVE
+        if job.status.ready:
+            return JobStatus.READY
+
+        # Have all completions succeeded?
+        succeeded = job.status.succeeded
+        if succeeded and succeeded == job.spec.completions:
+            return JobStatus.SUCCEEDED
+        return JobStatus.UNKNOWN
+
     def submit(self, job):
         """
         Receive the job back and submit it.
@@ -31,7 +78,32 @@ class BatchJob(KubernetesObject):
         the user to get it back (and possibly inspect) and then submit.
         """
         batch_api = client.BatchV1Api()
-        return batch_api.create_namespaced_job(self.executor_args.namespace, job)
+        result = batch_api.create_namespaced_job(self.executor_args.namespace, job)
+        self.jobname = result.metadata.name
+        return result
+
+    def write_log(self, logprefix):
+        """
+        Write the job output to a logfile.
+
+        Pods associated with a job will have a label for "jobname"
+            metadata:
+            labels:
+               job-name: tacos46bqw
+        """
+        with client.ApiClient() as api_client:
+            api = client.CoreV1Api(api_client)
+            pods = api.list_namespaced_pod(
+                namespace=self.executor_args.namespace,
+                label_selector=f"job-name={self.jobname}",
+            )
+            for pod in pods.items:
+                log = api.read_namespaced_pod_log(
+                    name=pod.metadata.name, namespace=self.executor_args.namespace
+                )
+                logfile = f"{logprefix}-{pod.metadata.name}.txt"
+                logger.debug(f"Writing output to {logfile}")
+                utils.write_file(log, logfile)
 
     def generate(
         self,
@@ -54,7 +126,7 @@ class BatchJob(KubernetesObject):
         memory = self.job.resources.get("kueue.memory", "200Mi") or "200Mi"
 
         metadata = client.V1ObjectMeta(
-            name=self.jobname,
+            generate_name=self.jobprefix,
             labels={"kueue.x-k8s.io/queue-name": self.executor_args.queue_name},
         )
 
@@ -66,7 +138,7 @@ class BatchJob(KubernetesObject):
         # Job container
         container = client.V1Container(
             image=image,
-            name=self.jobname,
+            name=self.jobprefix,
             command=[command],
             args=args,
             working_dir=working_dir,
@@ -104,13 +176,15 @@ class FluxMiniCluster(KubernetesObject):
         Receive the job back and submit it.
         """
         crd_api = client.CustomObjectsApi()
-        return crd_api.create_namespaced_custom_object(
+        result = crd_api.create_namespaced_custom_object(
             group="flux-framework.org",
             version="v1alpha1",
             namespace=self.executor_args.namespace,
             plural="miniclusters",
             body=job,
         )
+        self.jobname = result.metadata.name
+        return result
 
     def generate(
         self,

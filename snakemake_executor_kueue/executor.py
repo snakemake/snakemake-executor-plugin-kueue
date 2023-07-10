@@ -9,14 +9,16 @@ from snakemake.executors import ClusterExecutor, sleep
 from snakemake.logging import logger
 from snakemake.resources import DefaultResources
 
-import snakemake_executor_kueue.custom_resource as custom_resource
+import snakemake_executor_kueue.custom_resource as cr
 
 # Make sure your cluster is running!
 config.load_kube_config()
 crd_api = client.CustomObjectsApi()
 api_client = crd_api.api_client
 
-KueueJob = namedtuple("KueueJob", "crd jobspec submit_result, callback error_callback")
+KueueJob = namedtuple(
+    "KueueJob", "job crd jobspec submit_result, kueue_logfile, callback error_callback"
+)
 
 
 class KueueExecutor(ClusterExecutor):
@@ -110,7 +112,7 @@ class KueueExecutor(ClusterExecutor):
         # Determine which CRD / operator to generate
         operator_type = job.resources.get("kueue.operator") or "job"
         if operator_type == "job":
-            crd = custom_resource.BatchJob(job, self.executor_args)
+            crd = cr.BatchJob(job, self.executor_args)
         else:
             raise WorkflowError(
                 "Currently only kueue.operator: job is supported under resources."
@@ -144,9 +146,11 @@ class KueueExecutor(ClusterExecutor):
         # Waiting for the jobid is a small performance penalty, same as calling flux.job.submit
         self.active_jobs.append(
             KueueJob(
+                job,
                 crd,
                 spec,
                 result,
+                logfile,
                 callback,
                 error_callback,
             )
@@ -170,34 +174,25 @@ class KueueExecutor(ClusterExecutor):
             # Loop through active jobs and act on status
             for j in active_jobs:
                 logger.debug("Checking status for job {}".format(j.crd.jobname))
+                status = j.crd.status()
 
-                # TODO need to get kueue status here
-                # contribute PR there first for how to do that.
-                # STOPPED HERE
-                if j.flux_future.done():
-                    # The exit code can help us determine if the job was successful
-                    try:
-                        exit_code = j.flux_future.result(0)
-                    except RuntimeError:
-                        # job did not complete
-                        self.print_job_error(j.job, jobid=j.jobid)
-                        j.error_callback(j.job)
+                if status == cr.JobStatus.FAILED:
+                    # Retrieve the job log and write to file
+                    j.crd.write_log(j.kueue_logfile)
 
-                    else:
-                        # the job finished (but possibly with nonzero exit code)
-                        if exit_code != 0:
-                            self.print_job_error(
-                                j.job, jobid=j.jobid, aux_logs=[j.flux_logfile]
-                            )
-                            j.error_callback(j.job)
-                            continue
+                    # Tell user about it
+                    j.error_callback(j.job)
+                    continue
 
-                        # Finished and success!
-                        j.callback(j.job)
+                # Finished and success!
+                elif status == cr.JobStatus.SUCCEEDED:
+                    j.crd.write_log(j.kueue_logfile)
+                    j.callback(j.job)
 
                 # Otherwise, we are still running
                 else:
                     still_running.append(j)
+
             async with async_lock(self.lock):
                 self.active_jobs.extend(still_running)
 
