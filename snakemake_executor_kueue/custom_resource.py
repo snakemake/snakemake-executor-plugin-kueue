@@ -14,6 +14,7 @@ class JobStatus(Enum):
     READY = 2
     SUCCEEDED = 4
     UNKNOWN = 5
+    PENDING = 6
 
 
 class KubernetesObject:
@@ -21,13 +22,49 @@ class KubernetesObject:
     Shared class and functions for Kubernetes object.
     """
 
-    def __init__(self, job, executor_args):
+    def __init__(self, job, snakefile, executor_args):
         self.job = job
+        self.snakefile = snakefile
         self.executor_args = executor_args
         self.jobname = None
 
     def write_log(self, logfile):
         pass
+
+    def cleanup(self):
+        pass
+
+    @property
+    def snakefile_configmap(self):
+        return self.jobprefix + "-snakefile"
+
+    def delete_snakemake_configmap(self):
+        """
+        Delete the config map.
+        """
+        with client.ApiClient() as api_client:
+            api = client.CoreV1Api(api_client)
+            api.delete_namespaced_config_map(
+                namespace=self.executor_args.namespace, name=self.snakefile_configmap
+            )
+
+    def create_snakemake_configmap(self):
+        """
+        Create a config map for some
+        """
+        cm = client.V1ConfigMap(
+            api_version="v1",
+            kind="ConfigMap",
+            metadata=client.V1ObjectMeta(
+                name=self.snakefile_configmap, namespace=self.executor_args.namespace
+            ),
+            data={"snakefile": utils.read_file(self.snakefile)},
+        )
+        with client.ApiClient() as api_client:
+            api = client.CoreV1Api(api_client)
+            api.create_namespaced_config_map(
+                namespace=self.executor_args.namespace, body=cm
+            )
 
     @property
     def jobprefix(self):
@@ -52,10 +89,16 @@ class BatchJob(KubernetesObject):
         batch_api = client.BatchV1Api()
 
         # This is providing the name, and namespace
-        job = batch_api.read_namespaced_job(self.jobname, self.executor_args.namespace)
+        try:
+            job = batch_api.read_namespaced_job(
+                self.jobname, self.executor_args.namespace
+            )
+        except Exception as e:
+            print(str(e))
+            return JobStatus.PENDING
 
         # Any failure consider the job a failure
-        if job.status.failed != 0:
+        if job.status.failed is not None and job.status.failed > 0:
             return JobStatus.FAILED
 
         # Any jobs either active or ready, we aren't done yet
@@ -70,6 +113,12 @@ class BatchJob(KubernetesObject):
             return JobStatus.SUCCEEDED
         return JobStatus.UNKNOWN
 
+    def cleanup(self):
+        """
+        Cleanup, usually the config map.
+        """
+        self.delete_snakemake_configmap()
+
     def submit(self, job):
         """
         Receive the job back and submit it.
@@ -78,6 +127,10 @@ class BatchJob(KubernetesObject):
         the user to get it back (and possibly inspect) and then submit.
         """
         batch_api = client.BatchV1Api()
+
+        # Create a config map for the Snakefile
+        self.create_snakemake_configmap()
+
         result = batch_api.create_namespaced_job(self.executor_args.namespace, job)
         self.jobname = result.metadata.name
         return result
@@ -110,7 +163,6 @@ class BatchJob(KubernetesObject):
         image,
         command,
         args,
-        working_dir=None,
         deadline=None,
         environment=None,
     ):
@@ -141,7 +193,18 @@ class BatchJob(KubernetesObject):
             name=self.jobprefix,
             command=[command],
             args=args,
-            working_dir=working_dir,
+            working_dir="/workdir",
+            volume_mounts=[
+                client.V1VolumeMount(
+                    mount_path="/snakemake_workdir",
+                    name="snakefile-mount",
+                ),
+                client.V1VolumeMount(
+                    mount_path="/workdir",
+                    name="workdir-mount",
+                    read_only=False,
+                ),
+            ],
             env=environ,
             resources={
                 "requests": {
@@ -154,8 +217,33 @@ class BatchJob(KubernetesObject):
         if deadline:
             container.active_deadline_seconds = deadline
 
+        # Prepare volumes (with config map)
+        volumes = [
+            client.V1Volume(
+                name="snakefile-mount",
+                config_map=client.V1ConfigMapVolumeSource(
+                    name=self.snakefile_configmap,
+                    items=[
+                        client.V1KeyToPath(
+                            key="snakefile",
+                            path="Snakefile",
+                        )
+                    ],
+                ),
+            ),
+            client.V1Volume(
+                name="workdir-mount", empty_dir=client.V1EmptyDirVolumeSource()
+            ),
+        ]
+
         # Job template
-        template = {"spec": {"containers": [container], "restartPolicy": "Never"}}
+        template = {
+            "spec": {
+                "containers": [container],
+                "restartPolicy": "Never",
+                "volumes": volumes,
+            }
+        }
         return client.V1Job(
             api_version="batch/v1",
             kind="Job",

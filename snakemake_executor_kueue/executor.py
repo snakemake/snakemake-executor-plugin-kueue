@@ -61,12 +61,12 @@ class KueueExecutor(ClusterExecutor):
         """
         batch_api = client.BatchV1Api()
         for job in self.active_jobs:
-            resp = batch_api.delete_namespaced_job(
+            batch_api.delete_namespaced_job(
                 name=job.crd.jobname,
                 body=job.jobpsec,
                 namespace=self.executor_args.namespace,
             )
-            print(resp)
+            job.crd.cleanup()
         self.shutdown()
 
     def _set_job_resources(self, job):
@@ -79,6 +79,13 @@ class KueueExecutor(ClusterExecutor):
         )
 
     def get_snakefile(self):
+        """
+        This gets called by format_job_exec, so we want to return
+        the relative path in the container.
+        """
+        return "/snakemake_workdir/Snakefile"
+
+    def get_original_snakefile(self):
         assert os.path.exists(self.workflow.main_snakefile)
         return self.workflow.main_snakefile
 
@@ -105,27 +112,28 @@ class KueueExecutor(ClusterExecutor):
             or get_container_image()
         )
 
-        # TODO HOW TO WRITE LOGS TO FILE
-        # fluxjob.stderr = flux_logfile
-        # note that we pass forward the job to allow for custom resources
+        # Hard coding for now because of compatbility.
+        container = "snakemake/snakemake:v7.30.1"
 
         # Determine which CRD / operator to generate
         operator_type = job.resources.get("kueue.operator") or "job"
         if operator_type == "job":
-            crd = cr.BatchJob(job, self.executor_args)
+            crd = cr.BatchJob(
+                job,
+                executor_args=self.executor_args,
+                snakefile=self.get_original_snakefile(),
+            )
         else:
             raise WorkflowError(
                 "Currently only kueue.operator: job is supported under resources."
             )
 
         # Generate the job first
+        # TODO will need to pass some cleaned environment or scoped
         spec = crd.generate(
             image=container,
             command=command[0],
             args=command[1:],
-            # TODO memory needs to be retrieved and set to string
-            working_dir=self.workdir,
-            # Don't pass local environment for now
             environment={},
         )
 
@@ -175,6 +183,7 @@ class KueueExecutor(ClusterExecutor):
             for j in active_jobs:
                 logger.debug("Checking status for job {}".format(j.crd.jobname))
                 status = j.crd.status()
+                print(status)
 
                 if status == cr.JobStatus.FAILED:
                     # Retrieve the job log and write to file
@@ -182,12 +191,14 @@ class KueueExecutor(ClusterExecutor):
 
                     # Tell user about it
                     j.error_callback(j.job)
+                    j.crd.cleanup()
                     continue
 
                 # Finished and success!
                 elif status == cr.JobStatus.SUCCEEDED:
                     j.crd.write_log(j.kueue_logfile)
                     j.callback(j.job)
+                    j.crd.cleanup()
 
                 # Otherwise, we are still running
                 else:

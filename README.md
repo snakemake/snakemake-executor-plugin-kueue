@@ -50,6 +50,8 @@ By default, Kueue will use a batchv1/Job for each step. However, you can
 customize this to a different operator with the job [resources](https://snakemake.readthedocs.io/en/stable/snakefiles/rules.html#resources)
 via the kueue.operator attribute:
 
+**Note this does not work yet, as the resource names are checked**
+
 ```yaml
 rule a:
     input:     ...
