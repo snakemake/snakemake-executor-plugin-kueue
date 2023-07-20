@@ -25,7 +25,7 @@ E.g., here is an example:
 ```bash
 VERSION=v0.4.0
 kubectl apply -f https://github.com/kubernetes-sigs/kueue/releases/download/$VERSION/manifests.yaml
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/kueue/main/examples/single-clusterqueue-setup.yaml
+kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/kueue/main/site/static/examples/single-clusterqueue-setup.yaml
 ```
 
 You'll also need kubernetes python installed. We recommend a virtual environment (also with snakemake)
@@ -117,13 +117,8 @@ rule a:
 ```
 
 
-### Run Workflow
+For examples, check out the [example](example) directory.
 
-Try going into the [example](example) directory and running snakemake with the plugin:
-
-```bash
-$ snakemake --cores 1 --executor kueue
-```
 
 ## Want to write a plugin?
 

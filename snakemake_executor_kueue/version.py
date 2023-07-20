@@ -13,7 +13,11 @@ LICENSE = "LICENSE"
 # Since we assume wanting Singularity and lmod, we require spython and Jinja2
 
 INSTALL_REQUIRES = (
+    ("oras", {"min_version": None}),
     ("snakemake", {"min_version": None}),
+    ("Jinja2", {"min_version": None}),
+    ("kubernetes", {"min_version": None}),
+    ("portforward", {"min_version": None}),
     ("snakemake-executor-plugin-interface", {"min_version": None}),
 )
 

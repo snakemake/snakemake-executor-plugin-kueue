@@ -73,6 +73,16 @@ class KubernetesObject:
         """
         return ("snakejob-%s-%s" % (self.job.name, self.job.jobid)).replace("_", "-")
 
+    @property
+    def job_artifact(self):
+        """
+        Artifact name for job to push and pull to.
+
+        This likely needs to be more intelligent to associate with a specific step.
+        Right now we use one global identifier.
+        """
+        return ("snakejob-%s-%s" % (self.job.name, self.job.jobid)).replace("_", "-")
+
 
 class BatchJob(KubernetesObject):
     """
@@ -117,6 +127,11 @@ class BatchJob(KubernetesObject):
         """
         Cleanup, usually the config map.
         """
+        batch_api = client.BatchV1Api()
+        batch_api.delete_namespaced_job(
+            name=self.jobname,
+            namespace=self.executor_args.namespace,
+        )
         self.delete_snakemake_configmap()
 
     def submit(self, job):
@@ -179,7 +194,9 @@ class BatchJob(KubernetesObject):
 
         metadata = client.V1ObjectMeta(
             generate_name=self.jobprefix,
-            labels={"kueue.x-k8s.io/queue-name": self.executor_args.queue_name},
+            labels={
+                "kueue.x-k8s.io/queue-name": self.executor_args.queue_name,
+            },
         )
 
         environment = environment or {}
@@ -238,18 +255,23 @@ class BatchJob(KubernetesObject):
 
         # Job template
         template = {
+            "metadata": {
+                "labels": {"app": "registry"},
+            },
             "spec": {
                 "containers": [container],
                 "restartPolicy": "Never",
                 "volumes": volumes,
-            }
+                "setHostnameAsFQDN": True,
+                "subdomain": "r",
+            },
         }
         return client.V1Job(
             api_version="batch/v1",
             kind="Job",
             metadata=metadata,
             spec=client.V1JobSpec(
-                parallelism=nodes, completions=3, suspend=True, template=template
+                parallelism=nodes, completions=3, suspend=False, template=template
             ),
         )
 
@@ -309,6 +331,7 @@ class FluxMiniCluster(KubernetesObject):
         # For now keep logging verbose
         spec = models.MiniClusterSpec(
             job_labels={"kueue.x-k8s.io/queue-name": self.executor_args.queue_name},
+            pod_labels={"app": "registry"},
             containers=[container],
             working_dir=working_dir,
             size=nodes,

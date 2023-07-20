@@ -17,9 +17,19 @@ class ExecutorSettings(ExecutorSettingsBase):
             "help": "The name of the user queue to submit to (defaults to user-queue)"
         },
     )
+    # Assumes deploying a registry with an indexed job
+    registry: str = field(
+        # Default registry created by indexed job on service called "r" in the default namespace
+        default="registry-0.r.default.svc.cluster.local:5000",
+        metadata={"help": "Registry URI to push and pull workflow caches to and from."},
+    )
     container: str = field(
         default=None,
         metadata={"help": "Container base to use for Kubernetes cluster pods."},
+    )
+    insecure: str = field(
+        default=True,
+        metadata={"help": "Insecure registry using http and not https?"},
     )
     namespace: str = field(
         default="default",
