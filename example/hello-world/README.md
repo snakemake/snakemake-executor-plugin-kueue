@@ -14,20 +14,8 @@ Note that if you need an external registry, you likely need credentials or simil
 $ snakemake --cores 1 --executor kueue --kueue-registry registry-0:5000.r.default.svc.cluster.local:5000 --jobs 1 --kueue-insecure yes
 ```
 
-STOPPED HERE - get hack for insecure working.
-
 In the above note that:
 
  - we use the `kueue` executor
- - the registry is provided by the same headless service
+ - the registry is provided by the same headless service, and it's exposed via a kind configuration and node port.
  - we are asking for the registry to be insecure (we don't have https)
-
-
-TODO
-
-deploy reigstry
-run example and check pods for labels
-see if can exec into pod nad see registry
-need a way to create a user/login associated with the job
-run everything and cleanup at the end (give instruction to pull finished data)
-would we need a starting pod to manage some final state of data?  Or to launch from it (and pull at end?)
