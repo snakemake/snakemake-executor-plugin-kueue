@@ -3,7 +3,7 @@ from enum import Enum
 from kubernetes import client, config
 from snakemake.logging import logger
 
-import snakemake_executor_kueue.utils as utils
+import snakemake_executor_plugin_kueue.utils as utils
 
 config.load_kube_config()
 
@@ -22,10 +22,10 @@ class KubernetesObject:
     Shared class and functions for Kubernetes object.
     """
 
-    def __init__(self, job, snakefile, executor_args):
+    def __init__(self, job, snakefile, settings):
         self.job = job
         self.snakefile = snakefile
-        self.executor_args = executor_args
+        self.settings = settings
         self.jobname = None
 
     def write_log(self, logfile):
@@ -45,7 +45,7 @@ class KubernetesObject:
         with client.ApiClient() as api_client:
             api = client.CoreV1Api(api_client)
             api.delete_namespaced_config_map(
-                namespace=self.executor_args.namespace, name=self.snakefile_configmap
+                namespace=self.settings.namespace, name=self.snakefile_configmap
             )
 
     def create_snakemake_configmap(self):
@@ -56,14 +56,14 @@ class KubernetesObject:
             api_version="v1",
             kind="ConfigMap",
             metadata=client.V1ObjectMeta(
-                name=self.snakefile_configmap, namespace=self.executor_args.namespace
+                name=self.snakefile_configmap, namespace=self.settings.namespace
             ),
             data={"snakefile": utils.read_file(self.snakefile)},
         )
         with client.ApiClient() as api_client:
             api = client.CoreV1Api(api_client)
             api.create_namespaced_config_map(
-                namespace=self.executor_args.namespace, body=cm
+                namespace=self.settings.namespace, body=cm
             )
 
     @property
@@ -101,7 +101,7 @@ class BatchJob(KubernetesObject):
         # This is providing the name, and namespace
         try:
             job = batch_api.read_namespaced_job(
-                self.jobname, self.executor_args.namespace
+                self.jobname, self.settings.namespace
             )
         except Exception as e:
             print(str(e))
@@ -130,7 +130,7 @@ class BatchJob(KubernetesObject):
         batch_api = client.BatchV1Api()
         batch_api.delete_namespaced_job(
             name=self.jobname,
-            namespace=self.executor_args.namespace,
+            namespace=self.settings.namespace,
         )
         self.delete_snakemake_configmap()
 
@@ -146,7 +146,7 @@ class BatchJob(KubernetesObject):
         # Create a config map for the Snakefile
         self.create_snakemake_configmap()
 
-        result = batch_api.create_namespaced_job(self.executor_args.namespace, job)
+        result = batch_api.create_namespaced_job(self.settings.namespace, job)
         self.jobname = result.metadata.name
         return result
 
@@ -162,12 +162,12 @@ class BatchJob(KubernetesObject):
         with client.ApiClient() as api_client:
             api = client.CoreV1Api(api_client)
             pods = api.list_namespaced_pod(
-                namespace=self.executor_args.namespace,
+                namespace=self.settings.namespace,
                 label_selector=f"job-name={self.jobname}",
             )
             for pod in pods.items:
                 log = api.read_namespaced_pod_log(
-                    name=pod.metadata.name, namespace=self.executor_args.namespace
+                    name=pod.metadata.name, namespace=self.settings.namespace
                 )
                 logfile = f"{logprefix}-{pod.metadata.name}.txt"
                 logger.debug(f"Writing output to {logfile}")
@@ -190,12 +190,12 @@ class BatchJob(KubernetesObject):
         deadline = self.job.resources.get("runtime")
         nodes = self.job.resources.get("_nodes")
         cores = self.job.resources.get("_cores")
-        memory = self.job.resources.get("kueue.memory", "200Mi") or "200Mi"
+        memory = self.job.resources.get("kueue_memory", "200Mi") or "200Mi"
 
         metadata = client.V1ObjectMeta(
             generate_name=self.jobprefix,
             labels={
-                "kueue.x-k8s.io/queue-name": self.executor_args.queue_name,
+                "kueue.x-k8s.io/queue-name": self.settings.queue_name,
             },
         )
 
@@ -253,7 +253,7 @@ class BatchJob(KubernetesObject):
             ),
         ]
 
-        # Job template
+        # Job template (this has the selector hard coded, should be a variable)
         template = {
             "metadata": {
                 "labels": {"app": "registry"},
@@ -289,7 +289,7 @@ class FluxMiniCluster(KubernetesObject):
         result = crd_api.create_namespaced_custom_object(
             group="flux-framework.org",
             version="v1alpha1",
-            namespace=self.executor_args.namespace,
+            namespace=self.settings.namespace,
             plural="miniclusters",
             body=job,
         )
@@ -330,7 +330,7 @@ class FluxMiniCluster(KubernetesObject):
 
         # For now keep logging verbose
         spec = models.MiniClusterSpec(
-            job_labels={"kueue.x-k8s.io/queue-name": self.executor_args.queue_name},
+            job_labels={"kueue.x-k8s.io/queue-name": self.settings.queue_name},
             pod_labels={"app": "registry"},
             containers=[container],
             working_dir=working_dir,
@@ -346,7 +346,7 @@ class FluxMiniCluster(KubernetesObject):
             api_version="flux-framework.org/v1alpha1",
             metadata=client.V1ObjectMeta(
                 generate_name=self.jobname,
-                namespace=self.executor_args.namespace,
+                namespace=self.settings.namespace,
             ),
             spec=spec,
         )

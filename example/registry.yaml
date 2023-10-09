@@ -11,7 +11,11 @@ spec:
   template:
     metadata:
       labels:
+        # This selector label is for the job
         app: registry
+
+        # This is for the node service
+        service: registry
         name: registry
     spec:
       restartPolicy: OnFailure
@@ -22,6 +26,9 @@ spec:
       containers:
       - name: registry
         image: registry:2
+        env:
+        - name: REGISTRY_HTTP_SECRET
+          value: notsosecret
         ports:
         - containerPort: 5000
 ---

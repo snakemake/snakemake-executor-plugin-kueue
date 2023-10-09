@@ -11,6 +11,9 @@ rule all:
 rule hello_world:
 	output:
 		"{greeting}/world.txt",
+	resources: 
+		container="ghcr.io/rse-ops/mamba:snakemake",
+		kueue_operator="job"
 	shell:
 		"""
 		mkdir -p "{wildcards.greeting}"

@@ -14,21 +14,37 @@ interaction in parallel with the work here. I've written the code but largely ha
 You will need to create a cluster first. For local development we recommend [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installing-from-source):
 
 ```bash
-$ kind create cluster
+$ kind create cluster --config ./example/kind-cluster.yaml
 ```
 
+That is going to allow kind to expose our node port service to the host for the final step to get snakemake assets.
 You will then need to [install Kueue](https://kueue.sigs.k8s.io/docs/installation/) and
-[create your local queues](https://kueue.sigs.k8s.io/docs/tasks/administer_cluster_quotas/) with cluster quotas.
+[create your local queues](https://kueue.sigs.k8s.io/docs/tasks/administer_cluster_quotas/) with cluster quotas
 
 E.g., here is an example:
 
 ```bash
 VERSION=v0.4.0
 kubectl apply -f https://github.com/kubernetes-sigs/kueue/releases/download/$VERSION/manifests.yaml
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/kueue/main/site/static/examples/single-clusterqueue-setup.yaml
+```
+Then (wait a few minutes until the jobset controller is running.) and:
+
+```bash
+kubectl  apply -f example/cluster-queue.yaml 
+kubectl  apply -f example/resource-flavor.yaml 
+kubectl  apply -f example/user-queue.yaml 
 ```
 
-You'll also need kubernetes python installed. We recommend a virtual environment (also with snakemake)
+You need to create the registry for most examples. This also creates a service that exposes port 5000 (the registry) to kind at 30000, and
+this is what is forwarded to the host via kind-cluster.yaml.
+
+```bash
+kubectl apply -f example/registry.yaml
+kubectl apply -f example/registry-service.yaml
+```
+
+You'll also need kubernetes python installed. We recommend a virtual environment (also with snakemake). Note that installing the plugin
+here should add these dependencies.
 
 ```bash
 python -m venv env
@@ -42,22 +58,23 @@ And of course install the plugin! From the cloned repository you can do:
 pip install .
 ```
 
+Next go into an [example](example) directory to test out the Kueue executor.
+
+
 ### Job Resources
 
 #### Operator
 
 By default, Kueue will use a batchv1/Job for each step. However, you can
 customize this to a different operator with the job [resources](https://snakemake.readthedocs.io/en/stable/snakefiles/rules.html#resources)
-via the kueue.operator attribute:
-
-**Note this does not work yet, as the resource names are checked**
+via the kueue_operator attribute:
 
 ```yaml
 rule a:
     input:     ...
     output:    ...
     resources:
-        kueue.operator=flux-operator
+        kueue_operator=flux-operator
     shell:
         "..."
 ```
@@ -73,17 +90,18 @@ See the [Kueue tasks](https://kueue.sigs.k8s.io/docs/tasks/) for more details.
 
 #### Container
 
-If you are using the Flux operator, you need a container with Flux and your
-software! We have prepared a container with Flux, Snakemake, and Mamba for you to get started.
+You can customize the container you are using, which should have minimally Snakemake and your application
+software. We have prepared a container with Flux, Snakemake, and Mamba for you to get started.
 The [Dockerfile is here](https://github.com/rse-ops/flux-hpc/blob/main/snakemake/mamba/Dockerfile) and you can use our build as follows:
 
 ```yaml
-rule a:
-    input:     ...
-    output:    ...
-    resources:
-        container=ghcr.io/rse-ops/mamba:app-mamba
-    shell:
+rule hello_world:
+	output:
+		"...",
+	resources: 
+		container="ghcr.io/rse-ops/mamba:snakemake",
+		kueue_operator="job"
+	shell:
         "..."
 ```
 
@@ -97,7 +115,7 @@ rule a:
     input:     ...
     output:    ...
     resources:
-        kueue.memory=200M1
+        kueue_memory=200M1
     shell:
         "..."
 ```
@@ -111,7 +129,7 @@ rule a:
     input:     ...
     output:    ...
     resources:
-        kueue.tasks=1
+        kueue_tasks=1
     shell:
         "..."
 ```
