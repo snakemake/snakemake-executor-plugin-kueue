@@ -48,9 +48,39 @@ class KubernetesObject:
                 namespace=self.settings.namespace, name=self.snakefile_configmap
             )
 
+    def prepare_annotations(self, input_uris, output_uri):
+        """
+        Given a set of input uris and a container, prepare annotations
+        """
+        if self.settings.disable_oras_cache:
+            return {}
+
+        # Input uris is typically a set
+        annotations = {
+            # Always enable debugging for now
+            "oras.converged-computing.github.io/debug": "true",
+            "oras.converged-computing.github.io/oras-cache": self.settings.oras_cache_name,
+            "oras.converged-computing.github.io/output-uri": output_uri,
+            "oras.converged-computing.github.io/input-path": "/workdir",
+            "oras.converged-computing.github.io/output-path": "/workdir",
+            "oras.converged-computing.github.io/oras-entrypoint": "https://gist.githubusercontent.com/vsoch/91f233a77ea60f82658b7fbe39a7e533/raw/5c588824a4f61f055e0175b5c078d7672ac73ae4/entrypoint.sh",
+        }
+
+        input_uris = list(input_uris)
+
+        # This could be 0, 1, or >1
+        if len(input_uris) == 1:
+            annotations["oras.converged-computing.github.io/input-uri"] = input_uris[0]
+        if len(input_uris) > 1:
+            for i, input_uri in enumerate(input_uris):
+                annotations[
+                    f"oras.converged-computing.github.io/input-uri_{i}"
+                ] = input_uri
+        return annotations
+
     def create_snakemake_configmap(self):
         """
-        Create a config map for some
+        Create a config map for the Snakefile
         """
         cm = client.V1ConfigMap(
             api_version="v1",
@@ -62,9 +92,7 @@ class KubernetesObject:
         )
         with client.ApiClient() as api_client:
             api = client.CoreV1Api(api_client)
-            api.create_namespaced_config_map(
-                namespace=self.settings.namespace, body=cm
-            )
+            api.create_namespaced_config_map(namespace=self.settings.namespace, body=cm)
 
     @property
     def jobprefix(self):
@@ -100,9 +128,7 @@ class BatchJob(KubernetesObject):
 
         # This is providing the name, and namespace
         try:
-            job = batch_api.read_namespaced_job(
-                self.jobname, self.settings.namespace
-            )
+            job = batch_api.read_namespaced_job(self.jobname, self.settings.namespace)
         except Exception as e:
             print(str(e))
             return JobStatus.PENDING
@@ -167,7 +193,9 @@ class BatchJob(KubernetesObject):
             )
             for pod in pods.items:
                 log = api.read_namespaced_pod_log(
-                    name=pod.metadata.name, namespace=self.settings.namespace
+                    name=pod.metadata.name,
+                    namespace=self.settings.namespace,
+                    container=self.jobprefix,
                 )
                 logfile = f"{logprefix}-{pod.metadata.name}.txt"
                 logger.debug(f"Writing output to {logfile}")
@@ -178,6 +206,8 @@ class BatchJob(KubernetesObject):
         image,
         command,
         args,
+        input_uris,
+        output_uri,
         deadline=None,
         environment=None,
     ):
@@ -192,11 +222,15 @@ class BatchJob(KubernetesObject):
         cores = self.job.resources.get("_cores")
         memory = self.job.resources.get("kueue_memory", "200Mi") or "200Mi"
 
+        # Prepare annotations for the job spec
+        annotations = self.prepare_annotations(input_uris, output_uri)
+
         metadata = client.V1ObjectMeta(
             generate_name=self.jobprefix,
             labels={
                 "kueue.x-k8s.io/queue-name": self.settings.queue_name,
             },
+            annotations=annotations,
         )
 
         environment = environment or {}
@@ -266,6 +300,7 @@ class BatchJob(KubernetesObject):
                 "subdomain": "r",
             },
         }
+
         return client.V1Job(
             api_version="batch/v1",
             kind="Job",
@@ -301,6 +336,8 @@ class FluxMiniCluster(KubernetesObject):
         image,
         command,
         args,
+        input_uris,
+        output_uri,
         working_dir=None,
         deadline=None,
         environment=None,
@@ -308,6 +345,11 @@ class FluxMiniCluster(KubernetesObject):
         """
         Generate the MiniCluster crd.spec
         """
+        print("GENERATE MINICLUSTER")
+        import IPython
+
+        IPython.embed()
+
         import fluxoperator.models as models
 
         deadline = self.job.resources.get("runtime")
@@ -337,6 +379,7 @@ class FluxMiniCluster(KubernetesObject):
             size=nodes,
             tasks=tasks,
             logging={"quiet": False},
+            pod={"annotations": self.prepare_annotations(input_uris, output_uri)},
         )
         if deadline:
             spec.deadline = deadline

@@ -1,9 +1,7 @@
 import os
-import shlex
 from typing import Generator, List
 
-import oras.client
-from jinja2 import Template
+import hashlib
 from kubernetes import client, config
 from kubernetes.client.api import core_v1_api
 from snakemake.common import get_container_image
@@ -14,9 +12,15 @@ from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
 from snakemake_interface_executor_plugins.jobs import JobExecutorInterface
 from snakemake_interface_executor_plugins.logging import LoggerExecutorInterface
 from snakemake_interface_executor_plugins.workflow import WorkflowExecutorInterface
+from snakemake_interface_executor_plugins.utils import (
+    encode_target_jobs_cli_args,
+    format_cli_arg,
+    join_cli_args,
+)
 
 import snakemake_executor_plugin_kueue.custom_resource as cr
-from .template import install_oras, pull_oras, push_oras
+import snakemake_executor_plugin_kueue.oras as oras
+
 
 # Make sure your cluster is running!
 config.load_kube_config()
@@ -30,24 +34,18 @@ class KueueExecutor(RemoteExecutor):
         workflow: WorkflowExecutorInterface,
         logger: LoggerExecutorInterface,
     ):
-        super().__init__(
-            workflow,
-            logger,
-            # configure behavior of RemoteExecutor below
-            # whether arguments for setting the remote provider shall  be passed to jobs
-            pass_default_remote_provider_args=True,
-            # whether arguments for setting default resources shall be passed to jobs
-            pass_default_resources_args=True,
-            # whether environment variables shall be passed to jobs
-            pass_envvar_declarations_to_cmd=True,
-            # specify initial amount of seconds to sleep before checking for job status
-            init_seconds_before_status_checks=0,
-        )
+        super().__init__(workflow, logger)
 
         # Attach variables for easy access
         self.workdir = os.path.realpath(os.path.dirname(self.workflow.persistence.path))
-        self.envvars = list(self.workflow.envvars) or []
+        # self.envvars = list(self.workflow.envvars) or []
         self._core_v1 = None
+
+        # Upload the working directory to the oras cache
+        self._workflow_uid = None
+        self.oras = oras.OrasRegistry(self.executor_settings, self.workdir)
+        if not self.executor_settings.disable_oras_cache:
+            self.upload_workdir()
 
     @property
     def core_v1(self):
@@ -72,39 +70,111 @@ class KueueExecutor(RemoteExecutor):
         """
         return "/snakemake_workdir/Snakefile"
 
-    def get_envvar_declarations(self):
+    def format_job_exec(self, job: JobExecutorInterface) -> str:
         """
-        Temporary workaround until:
-        https://github.com/snakemake/snakemake-interface-executor-plugins/pull/31
-        is able to be merged.
+        Redefining this function to not add so many arguments.
         """
-        if self.pass_envvar_declarations_to_cmd:
-            return " ".join(
-                f"{var}={repr(os.environ[var])}"
-                for var in self.workflow.remote_execution_settings.envvars or {}
-            )
-        else:
-            return ""
+        prefix = self.get_job_exec_prefix(job)
+        if prefix:
+            prefix += " &&"
+        suffix = self.get_job_exec_suffix(job)
+        if suffix:
+            suffix = f"&& {suffix}"
+        general_args = self.workflow.spawned_job_args_factory.general_args(
+            pass_default_storage_provider_args=self.common_settings.pass_default_storage_provider_args,
+            pass_default_resources_args=self.common_settings.pass_default_resources_args,
+        )
+
+        # This is edited to remove the storage provider logic
+        general_args = general_args.split("--scheduler-solver-path ")[0]
+        general_args += " --default-resources 'tmpdir=system_tmpdir'"
+
+        precommand = self.workflow.spawned_job_args_factory.precommand(
+            auto_deploy_default_storage_provider=self.common_settings.auto_deploy_default_storage_provider
+        )
+        precommand = f"cd {self.oras.dirname}"
+        if precommand:
+            precommand += " &&"
+
+        args = join_cli_args(
+            [
+                prefix,
+                self.get_envvar_declarations(),
+                precommand,
+                self.get_python_executable(),
+                "-m snakemake",
+                format_cli_arg("--snakefile", self.get_snakefile()),
+                self.get_job_args(job),
+                general_args,
+                self.additional_general_args(),
+                # format_cli_arg("--mode", self.get_exec_mode().item_to_choice()),
+                format_cli_arg(
+                    "--local-groupid",
+                    self.workflow.group_settings.local_groupid,
+                    skip=self.job_specific_local_groupid,
+                ),
+                suffix,
+            ]
+        )
+
+        removes = [
+            " --target-files-omit-workdir-adjustment",
+            " --keep-storage-local-copies",
+        ]
+        for remove in removes:
+            args = args.replace(remove, "")
+
+        return args
+
+    def get_job_args(self, job: JobExecutorInterface, **kwargs):
+        return join_cli_args(
+            [
+                format_cli_arg(
+                    "--target-jobs", encode_target_jobs_cli_args(job.get_target_spec())
+                ),
+                # Restrict considered rules for faster DAG computation.
+                # This does not work for updated jobs because they need
+                # to be updated in the spawned process as well.
+                format_cli_arg(
+                    "--allowed-rules",
+                    job.rules,
+                    quote=False,
+                    skip=job.is_updated,
+                ),
+                # Ensure that a group uses its proper local groupid.
+                format_cli_arg("--local-groupid", job.jobid, skip=not job.is_group()),
+                format_cli_arg("--cores", kwargs.get("cores", self.cores)),
+                format_cli_arg("--attempt", job.attempt),
+                format_cli_arg("--force-use-threads", not job.is_group()),
+                self.get_resource_declarations(job),
+            ]
+        )
+
+    def get_python_executable(self):
+        """
+        We assume running in a Kubernetes container, and target python3.
+
+        We need to do this because we tell the executor that it's running on
+        a shared filesystem only to avoid requiring the external storage provider.
+        """
+        return "python3"
 
     def get_original_snakefile(self):
         assert os.path.exists(self.workflow.main_snakefile)
         return self.workflow.main_snakefile
 
     def run_job(self, job: JobExecutorInterface):
-        # Implement here how to run a job.
-        # You can access the job's resources, etc.
-        # via the job object.
-        # After submitting the job, you have to call
-        # self.report_job_submission(job_info).
-        # with job_info being of type
-        # snakemake_interface_executor_plugins.executors.base.SubmittedJobInfo.
-        # If required, make sure to pass the job's id to the job_info object, as keyword
-        # argument 'external_job_id'.
+        """
+        Run the job. This is a terrible docstring.
+        """
         logfile = job.logfile_suggestion(os.path.join(".snakemake", "kueue_logs"))
         os.makedirs(os.path.dirname(logfile), exist_ok=True)
 
         # The entire snakemake command to run, etc
         command = self.format_job_exec(job)
+
+        # Not sure what this is, but doesn't exist in container
+        # command = command.replace(" --mode 'remote'", "")
         self.logger.debug(command)
 
         # First preference to job container, then executor settings, then default
@@ -127,48 +197,40 @@ class KueueExecutor(RemoteExecutor):
                 "Currently only kueue_operator: job is supported under resources."
             )
 
-        # Store job container with job so we can pull as we go
-        job_container = f"snakemake/{job.name}:latest"
+        # This is the container for this job.
+        # This assumes there is no other job with this name that shares the container.
+        # If there is some groupign under a job.name that needs to be addressed
+        output_uri = f"snakemake/{job.name}:latest"
 
-        # The command needs to be prefixed with downloading oras
-        push_command = Template(push_oras).render(
-            insecure=self.executor_settings.insecure,
-            registry=self.executor_settings.registry,
-            container=job_container,
-        )
-        pre_command = " && ".join(install_oras)
-
-        # These are the dependent jobs we need to download
+        # Now we need a list of input-uri to pull
         deps = list(job.dag.dependencies[job.name].keys())
+        input_uris = set()
         for dep in deps:
-            pre_command += " && " + (
-                Template(pull_oras).render(
-                    insecure=self.executor_settings.insecure,
-                    registry=self.executor_settings.registry,
-                    container=f"snakemake/{dep}:latest",
-                )
-            )
+            input_uris.add(f"snakemake/{dep}:latest")
+
+        # If we don't have inputs, assume we need the working directory
+        # more ideally this would be able to know step 0
+        if not input_uris:
+            input_uris.add(f"snakemake/{self.workflow_uid}:latest")
 
         # Hard coding for now because of compatbility.
-        # container = "snakemake/snakemake:v7.30.1"
+        container = "snakemake/snakemake:v7.30.1"
 
         # Add the run and push command
         command = " && ".join(
             [
-                f"echo '{pre_command} {command}'",
-                pre_command,
+                f"echo '{command}'",
                 command,
-                f"echo {push_command}",
-                push_command,
             ]
         )
 
         # Generate the job first
-        # TODO will need to pass some cleaned environment or scoped
         spec = crd.generate(
             image=container,
             command="/bin/bash",
             args=["-c", command],
+            input_uris=input_uris,
+            output_uri=output_uri,
             environment={},
         )
 
@@ -190,7 +252,8 @@ class KueueExecutor(RemoteExecutor):
         aux = {
             "crd": crd,
             "kueue_logfile": logfile,
-            "job_container": job_container,
+            "output_uri": output_uri,
+            "input_uris": input_uris,
             "spec": spec,
             "result": result,
         }
@@ -198,26 +261,32 @@ class KueueExecutor(RemoteExecutor):
             SubmittedJobInfo(job, external_jobid=crd.jobname, aux=aux)
         )
 
+    @property
+    def workflow_uid(self):
+        """
+        Generate a unique id for the workflow based on hashing the object.
+        """
+        if not self._workflow_uid:
+            hasher = hashlib.md5()
+            hasher.update(str(self.workflow).encode("utf-8"))
+            self._workflow_uid = hasher.hexdigest()
+        return self._workflow_uid
+
+    def upload_workdir(self):
+        """
+        Upload the first cache of the working directory.
+
+        ORAS (python) is required.
+        """
+        container = f"snakemake/{self.workflow_uid}:latest"
+        self.oras.push(container)
+
     def update_workdir(self, job):
         """
         Update the working directory with a pull of the container
         from the registry. We need to port forward to access the service.
         """
-        here = os.path.abspath(self.workdir)
-
-        # Container associated with last job
-        container = job.aux['job_container']
-        registry = self.executor_settings.pull_registry
-
-        # We can't rely on a port forward here, is in an asyncio function
-        print(f"Pulling {registry}{container} to {here}")
-        client = oras.client.OrasClient(insecure=self.executor_settings.insecure)
-        client.pull(
-            allowed_media_type=[],
-            overwrite=True,
-            outdir=os.path.join(here, "res"),
-            target=registry + container,
-         )
+        self.oras.pull(job.aux["output_uri"])
 
     async def check_active_jobs(
         self, active_jobs: List[SubmittedJobInfo]
@@ -258,8 +327,7 @@ class KueueExecutor(RemoteExecutor):
 
     def cancel_jobs(self, active_jobs: List[SubmittedJobInfo]):
         """
-        cancel execution, usually by way of control+c. Cleanup is done in
-        shutdown (deleting cached workdirs in Google Cloud Storage
+        cancel execution, usually by way of control+c.
         """
         for job in self.active_jobs:
             crd = job.aux["crd"]

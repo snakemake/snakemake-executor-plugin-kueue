@@ -10,6 +10,8 @@ packages = [{include = "snakemake_executor_plugin_kueue"}]
 python = "^3.11"
 kubernetes = "^28.1.0"
 oras = "^0.1.25"
+requests = "^2.31.0"
+portforward = "^0.6.0"
 
 
 [build-system]

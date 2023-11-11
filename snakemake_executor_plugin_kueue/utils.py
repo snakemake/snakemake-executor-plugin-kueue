@@ -1,3 +1,6 @@
+import os
+
+
 def write_file(content, filename):
     """
     Write content to file.

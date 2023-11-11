@@ -1,0 +1,8 @@
+apiVersion: cache.converged-computing.github.io/v1alpha1
+kind: OrasCache
+metadata:
+  # Keep this short to not go over 64 character limit
+  name: oras
+spec:
+  # We can use all the defaults here (this is a default)
+  image: ghcr.io/oras-project/registry:latest

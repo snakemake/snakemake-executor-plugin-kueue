@@ -18,6 +18,9 @@ $ kind create cluster --config ./example/kind-cluster.yaml
 ```
 
 That is going to allow kind to expose our node port service to the host for the final step to get snakemake assets.
+
+#### Install Kueue
+
 You will then need to [install Kueue](https://kueue.sigs.k8s.io/docs/installation/) and
 [create your local queues](https://kueue.sigs.k8s.io/docs/tasks/administer_cluster_quotas/) with cluster quotas
 
@@ -27,6 +30,7 @@ E.g., here is an example:
 VERSION=v0.4.0
 kubectl apply -f https://github.com/kubernetes-sigs/kueue/releases/download/$VERSION/manifests.yaml
 ```
+
 Then (wait a few minutes until the jobset controller is running.) and:
 
 ```bash
@@ -35,31 +39,28 @@ kubectl  apply -f example/resource-flavor.yaml
 kubectl  apply -f example/user-queue.yaml 
 ```
 
-You need to create the registry for most examples. This also creates a service that exposes port 5000 (the registry) to kind at 30000, and
-this is what is forwarded to the host via kind-cluster.yaml.
+#### Install ORAS Registry Cache
+
+For caching of our artifacts between steps, we will use the ORAS operator, which can be installed as follows:
 
 ```bash
-kubectl apply -f example/registry.yaml
-kubectl apply -f example/registry-service.yaml
+# The oras operator requires cert manager (wait a minute or so for this to be ready)
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.1/cert-manager.yaml
+
+# Wait about a minute...
+kubectl apply -f https://raw.githubusercontent.com/converged-computing/oras-operator/main/examples/dist/oras-operator.yaml
 ```
 
-You'll also need kubernetes python installed. We recommend a virtual environment (also with snakemake). Note that installing the plugin
-here should add these dependencies.
+You'll also need kubernetes python installed, and of course Snakemake! Assuming you have snakemake and the plugin here installed, you should be good
+to go. Here is how I setup a local or development environment.
 
 ```bash
 python -m venv env
 source env/bin/activate
-pip install kubernetes requests snakemake
-```
-
-And of course install the plugin! From the cloned repository you can do:
-
-```bash
 pip install .
 ```
 
 Next go into an [example](example) directory to test out the Kueue executor.
-
 
 ### Job Resources
 
