@@ -1,7 +1,19 @@
-[tool.black]
-profile = "black"
-exclude = ["^env/"]
+[tool.poetry]
+name = "snakemake-executor-plugin-kueue"
+version = "0.1.0"
+description = ""
+authors = ["vsoch <vsoch@users.noreply.github.com>"]
+readme = "README.md"
+packages = [{include = "snakemake_executor_plugin_kueue"}]
 
-[tool.isort]
-profile = "black" # needed for black/isort compatibility
-skip = []
+[tool.poetry.dependencies]
+python = "^3.11"
+kubernetes = "^28.1.0"
+oras = "^0.1.25"
+requests = "^2.31.0"
+portforward = "^0.6.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -14,4 +14,5 @@ and **Merged pull requests**. Critical items to know are:
 The versions coincide with releases on pip. Only major versions will be released as tags on Github.
 
 ## [0.0.x](https://github.com/snakemake/snakemake-executor-kueue/tree/main) (0.0.x)
+ - Update to use first draft of snakemake executor plugin scaffolding (0.0.1)
  - initial skeleton release of project (0.0.0)

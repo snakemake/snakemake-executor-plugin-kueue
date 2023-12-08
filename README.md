@@ -4,8 +4,8 @@ This is a [snakemake executor plugin](https://github.com/snakemake/snakemake-exe
 that enables interaction with [Kueue](https://kueue.sigs.k8s.io/docs/overview/). The plugin will
 install Python dependencies that are needed, and it's assumed that you have [installed Kueue and have queues configured](https://kueue.sigs.k8s.io/docs/tasks/run_jobs/#before-you-begin).
 
-**under development** not read for use! I am working on doing PRs to Kueue to add examples for Python
-interaction in parallel with the work here. I've written the code but largely have not tested / developed fully yet!
+**under development** note that the base container is a custom build under my namespace (`vanessa`)
+that has clones from main branches (as opposed to releases).
 
 ## Usage
 
@@ -17,30 +17,36 @@ You will need to create a cluster first. For local development we recommend [kin
 $ kind create cluster
 ```
 
+#### Install Kueue
+
 You will then need to [install Kueue](https://kueue.sigs.k8s.io/docs/installation/) and
-[create your local queues](https://kueue.sigs.k8s.io/docs/tasks/administer_cluster_quotas/) with cluster quotas.
+[create your local queues](https://kueue.sigs.k8s.io/docs/tasks/administer_cluster_quotas/) with cluster quotas
 
 E.g., here is an example:
 
 ```bash
 VERSION=v0.4.0
 kubectl apply -f https://github.com/kubernetes-sigs/kueue/releases/download/$VERSION/manifests.yaml
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/kueue/main/site/static/examples/single-clusterqueue-setup.yaml
 ```
 
-You'll also need kubernetes python installed. We recommend a virtual environment (also with snakemake)
+Then (wait a few minutes until the jobset controller is running.) and:
+
+```bash
+kubectl  apply -f example/cluster-queue.yaml 
+kubectl  apply -f example/resource-flavor.yaml 
+kubectl  apply -f example/user-queue.yaml 
+```
+
+You'll also need kubernetes python installed, and of course Snakemake! Assuming you have snakemake and the plugin here installed, you should be good
+to go. Here is how I setup a local or development environment.
 
 ```bash
 python -m venv env
 source env/bin/activate
-pip install kubernetes requests snakemake
-```
-
-And of course install the plugin! From the cloned repository you can do:
-
-```bash
 pip install .
 ```
+
+Next go into an [example](example) directory to test out the Kueue executor.
 
 ### Job Resources
 
@@ -48,21 +54,19 @@ pip install .
 
 By default, Kueue will use a batchv1/Job for each step. However, you can
 customize this to a different operator with the job [resources](https://snakemake.readthedocs.io/en/stable/snakefiles/rules.html#resources)
-via the kueue.operator attribute:
-
-**Note this does not work yet, as the resource names are checked**
+via the kueue_operator attribute:
 
 ```yaml
 rule a:
     input:     ...
     output:    ...
     resources:
-        kueue.operator=flux-operator
+        kueue_operator=flux-operator
     shell:
         "..."
 ```
 
-We currently support the following `operator`s:
+Along with a standard batchv1 Job, We currently support the following `operator`s:
 
  - flux-operator: deploy using the [Flux Operator](https://github.com/flux-framework/flux-operator)
  - mpi-operator: deploy using the [MPI Operator](https://github.com/kubeflow/mpi-operator/)
@@ -73,17 +77,18 @@ See the [Kueue tasks](https://kueue.sigs.k8s.io/docs/tasks/) for more details.
 
 #### Container
 
-If you are using the Flux operator, you need a container with Flux and your
-software! We have prepared a container with Flux, Snakemake, and Mamba for you to get started.
-The [Dockerfile is here](https://github.com/rse-ops/flux-hpc/blob/main/snakemake/mamba/Dockerfile) and you can use our build as follows:
+You can customize the container you are using, which should have minimally Snakemake and your application
+software. We have prepared a container with Flux, Snakemake, and the various other plugins for you to get started.
+The [Dockerfile](Dockerfile) is packaged here if you'd like to tweak it, e.g.,
 
 ```yaml
-rule a:
-    input:     ...
-    output:    ...
-    resources:
-        container=ghcr.io/rse-ops/mamba:app-mamba
-    shell:
+rule hello_world:
+	output:
+		"...",
+	resources: 
+		container="ghcr.io/rse-ops/mamba:snakemake",
+		kueue_operator="job"
+	shell:
         "..."
 ```
 
@@ -97,7 +102,7 @@ rule a:
     input:     ...
     output:    ...
     resources:
-        kueue.memory=200M1
+        kueue_memory=200M1
     shell:
         "..."
 ```
@@ -111,7 +116,7 @@ rule a:
     input:     ...
     output:    ...
     resources:
-        kueue.tasks=1
+        kueue_tasks=1
     shell:
         "..."
 ```
