@@ -48,34 +48,11 @@ class KubernetesObject:
                 namespace=self.settings.namespace, name=self.snakefile_configmap
             )
 
-    def prepare_annotations(self, input_uris, output_uri):
+    def prepare_annotations(self):
         """
         Given a set of input uris and a container, prepare annotations
         """
-        if self.settings.disable_oras_cache:
-            return {}
-
-        # Input uris is typically a set
-        annotations = {
-            # Always enable debugging for now
-            "oras.converged-computing.github.io/debug": "true",
-            "oras.converged-computing.github.io/oras-cache": self.settings.oras_cache_name,
-            "oras.converged-computing.github.io/output-uri": output_uri,
-            "oras.converged-computing.github.io/input-path": "/workdir",
-            "oras.converged-computing.github.io/output-path": "/workdir",
-            "oras.converged-computing.github.io/oras-entrypoint": "https://gist.githubusercontent.com/vsoch/91f233a77ea60f82658b7fbe39a7e533/raw/5c588824a4f61f055e0175b5c078d7672ac73ae4/entrypoint.sh",
-        }
-
-        input_uris = list(input_uris)
-
-        # This could be 0, 1, or >1
-        if len(input_uris) == 1:
-            annotations["oras.converged-computing.github.io/input-uri"] = input_uris[0]
-        if len(input_uris) > 1:
-            for i, input_uri in enumerate(input_uris):
-                annotations[
-                    f"oras.converged-computing.github.io/input-uri_{i}"
-                ] = input_uri
+        annotations = {}
         return annotations
 
     def create_snakemake_configmap(self):
@@ -206,8 +183,6 @@ class BatchJob(KubernetesObject):
         image,
         command,
         args,
-        input_uris,
-        output_uri,
         deadline=None,
         environment=None,
     ):
@@ -223,7 +198,7 @@ class BatchJob(KubernetesObject):
         memory = self.job.resources.get("kueue_memory", "200Mi") or "200Mi"
 
         # Prepare annotations for the job spec
-        annotations = self.prepare_annotations(input_uris, output_uri)
+        annotations = self.prepare_annotations()
 
         metadata = client.V1ObjectMeta(
             generate_name=self.jobprefix,
@@ -336,8 +311,6 @@ class FluxMiniCluster(KubernetesObject):
         image,
         command,
         args,
-        input_uris,
-        output_uri,
         working_dir=None,
         deadline=None,
         environment=None,
@@ -379,7 +352,7 @@ class FluxMiniCluster(KubernetesObject):
             size=nodes,
             tasks=tasks,
             logging={"quiet": False},
-            pod={"annotations": self.prepare_annotations(input_uris, output_uri)},
+            pod={"annotations": self.prepare_annotations()},
         )
         if deadline:
             spec.deadline = deadline

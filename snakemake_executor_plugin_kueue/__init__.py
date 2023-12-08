@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Generator, Optional
+from typing import Optional
 from snakemake_interface_executor_plugins.settings import (
     CommonSettings,
     ExecutorSettingsBase,
@@ -23,35 +23,6 @@ class ExecutorSettings(ExecutorSettingsBase):
             "required": False,
         },
     )
-
-    registry: Optional[str] = field(
-        default="oras-0.oras.default.svc.cluster.local:5000",
-        metadata={
-            "help": "Registry URI to push and pull workflow caches to and from.",
-            "env_var": False,
-            "required": False,
-        },
-    )
-
-    oras_service_port: Optional[int] = field(
-        default=5000,
-        metadata={
-            "help": "ORAS service name (defaults to oras)",
-            "env_var": False,
-            "required": False,
-            "type": int,
-        },
-    )
-
-    oras_cache_name: Optional[str] = field(
-        default="oras",
-        metadata={
-            "help": "Name of oras cache deployed as stateful set (defaults to oras, pod name oras-0)",
-            "env_var": False,
-            "required": False,
-        },
-    )
-
     # mpitune configurations are validated on c2 and c2d instances only.
     container: Optional[str] = field(
         default=None,
@@ -61,17 +32,6 @@ class ExecutorSettings(ExecutorSettingsBase):
             "required": False,
         },
     )
-
-    disable_oras_cache: Optional[bool] = field(
-        default=False,
-        metadata={
-            "help": "Disable using the ORAS Operator artifact cache (you will need another remote)",
-            "env_var": False,
-            "required": False,
-            "type": bool,
-        },
-    )
-
     namespace: Optional[str] = field(
         default="default",
         metadata={
@@ -91,8 +51,6 @@ common_settings = CommonSettings(
     # plugins (snakemake-executor-plugin-dryrun, snakemake-executor-plugin-local)
     # are expected to specify False here.
     non_local_exec=True,
-    pass_default_storage_provider_args=False,
-    # Kueue typically doesn't have a shared local filesystem. We use a trick here to
-    # save steps via artifacts and then pull down, but likely need something better.
-    implies_no_shared_fs=False,
+    pass_default_storage_provider_args=True,
+    implies_no_shared_fs=True,
 )

@@ -4,7 +4,7 @@ rule all:
 	input:
 		expand(
 			"{greeting}/world.txt",
-			greeting = ['hello', 'hola'],
+			greeting = ['hello1', 'hola1'],
 		),
 
 # First real rule, this is using a wildcard called "greeting"

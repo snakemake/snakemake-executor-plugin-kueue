@@ -4,8 +4,8 @@ This is a [snakemake executor plugin](https://github.com/snakemake/snakemake-exe
 that enables interaction with [Kueue](https://kueue.sigs.k8s.io/docs/overview/). The plugin will
 install Python dependencies that are needed, and it's assumed that you have [installed Kueue and have queues configured](https://kueue.sigs.k8s.io/docs/tasks/run_jobs/#before-you-begin).
 
-**under development** not read for use! I am working on doing PRs to Kueue to add examples for Python
-interaction in parallel with the work here. I've written the code but largely have not tested / developed fully yet!
+**under development** note that the base container is a custom build under my namespace (`vanessa`)
+that has clones from main branches (as opposed to releases).
 
 ## Usage
 
@@ -14,10 +14,8 @@ interaction in parallel with the work here. I've written the code but largely ha
 You will need to create a cluster first. For local development we recommend [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installing-from-source):
 
 ```bash
-$ kind create cluster --config ./example/kind-cluster.yaml
+$ kind create cluster
 ```
-
-That is going to allow kind to expose our node port service to the host for the final step to get snakemake assets.
 
 #### Install Kueue
 
@@ -37,18 +35,6 @@ Then (wait a few minutes until the jobset controller is running.) and:
 kubectl  apply -f example/cluster-queue.yaml 
 kubectl  apply -f example/resource-flavor.yaml 
 kubectl  apply -f example/user-queue.yaml 
-```
-
-#### Install ORAS Registry Cache
-
-For caching of our artifacts between steps, we will use the ORAS operator, which can be installed as follows:
-
-```bash
-# The oras operator requires cert manager (wait a minute or so for this to be ready)
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.1/cert-manager.yaml
-
-# Wait about a minute...
-kubectl apply -f https://raw.githubusercontent.com/converged-computing/oras-operator/main/examples/dist/oras-operator.yaml
 ```
 
 You'll also need kubernetes python installed, and of course Snakemake! Assuming you have snakemake and the plugin here installed, you should be good
@@ -80,7 +66,7 @@ rule a:
         "..."
 ```
 
-We currently support the following `operator`s:
+Along with a standard batchv1 Job, We currently support the following `operator`s:
 
  - flux-operator: deploy using the [Flux Operator](https://github.com/flux-framework/flux-operator)
  - mpi-operator: deploy using the [MPI Operator](https://github.com/kubeflow/mpi-operator/)
@@ -92,8 +78,8 @@ See the [Kueue tasks](https://kueue.sigs.k8s.io/docs/tasks/) for more details.
 #### Container
 
 You can customize the container you are using, which should have minimally Snakemake and your application
-software. We have prepared a container with Flux, Snakemake, and Mamba for you to get started.
-The [Dockerfile is here](https://github.com/rse-ops/flux-hpc/blob/main/snakemake/mamba/Dockerfile) and you can use our build as follows:
+software. We have prepared a container with Flux, Snakemake, and the various other plugins for you to get started.
+The [Dockerfile](Dockerfile) is packaged here if you'd like to tweak it, e.g.,
 
 ```yaml
 rule hello_world:

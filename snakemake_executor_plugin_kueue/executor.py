@@ -1,6 +1,7 @@
 import os
 from typing import Generator, List
 
+import time
 import hashlib
 from kubernetes import client, config
 from kubernetes.client.api import core_v1_api
@@ -19,8 +20,8 @@ from snakemake_interface_executor_plugins.utils import (
 )
 
 import snakemake_executor_plugin_kueue.custom_resource as cr
-import snakemake_executor_plugin_kueue.oras as oras
 
+# import snakemake_executor_plugin_kueue.oras as oras
 
 # Make sure your cluster is running!
 config.load_kube_config()
@@ -43,9 +44,10 @@ class KueueExecutor(RemoteExecutor):
 
         # Upload the working directory to the oras cache
         self._workflow_uid = None
-        self.oras = oras.OrasRegistry(self.executor_settings, self.workdir)
-        if not self.executor_settings.disable_oras_cache:
-            self.upload_workdir()
+        # self.oras = oras.OrasRegistry(self.executor_settings, self.workdir)
+        self.last_job = None
+        # if not self.executor_settings.disable_oras_cache:
+        #    self.upload_workdir()
 
     @property
     def core_v1(self):
@@ -80,22 +82,20 @@ class KueueExecutor(RemoteExecutor):
         suffix = self.get_job_exec_suffix(job)
         if suffix:
             suffix = f"&& {suffix}"
+
+        pass_storage_args = self.common_settings.pass_default_storage_provider_args
+        pass_resource_args = self.common_settings.pass_default_resources_args
+        auto_deploy = self.common_settings.auto_deploy_default_storage_provider
+
         general_args = self.workflow.spawned_job_args_factory.general_args(
-            pass_default_storage_provider_args=self.common_settings.pass_default_storage_provider_args,
-            pass_default_resources_args=self.common_settings.pass_default_resources_args,
+            pass_default_storage_provider_args=pass_storage_args,
+            pass_default_resources_args=pass_resource_args,
         )
-
-        # This is edited to remove the storage provider logic
-        general_args = general_args.split("--scheduler-solver-path ")[0]
-        general_args += " --default-resources 'tmpdir=system_tmpdir'"
-
         precommand = self.workflow.spawned_job_args_factory.precommand(
-            auto_deploy_default_storage_provider=self.common_settings.auto_deploy_default_storage_provider
+            auto_deploy_default_storage_provider=auto_deploy
         )
-        precommand = f"cd {self.oras.dirname}"
         if precommand:
             precommand += " &&"
-
         args = join_cli_args(
             [
                 prefix,
@@ -118,8 +118,7 @@ class KueueExecutor(RemoteExecutor):
         )
 
         removes = [
-            " --target-files-omit-workdir-adjustment",
-            " --keep-storage-local-copies",
+            "--storage-s3-retries 5",
         ]
         for remove in removes:
             args = args.replace(remove, "")
@@ -197,24 +196,8 @@ class KueueExecutor(RemoteExecutor):
                 "Currently only kueue_operator: job is supported under resources."
             )
 
-        # This is the container for this job.
-        # This assumes there is no other job with this name that shares the container.
-        # If there is some groupign under a job.name that needs to be addressed
-        output_uri = f"snakemake/{job.name}:latest"
-
-        # Now we need a list of input-uri to pull
-        deps = list(job.dag.dependencies[job.name].keys())
-        input_uris = set()
-        for dep in deps:
-            input_uris.add(f"snakemake/{dep}:latest")
-
-        # If we don't have inputs, assume we need the working directory
-        # more ideally this would be able to know step 0
-        if not input_uris:
-            input_uris.add(f"snakemake/{self.workflow_uid}:latest")
-
         # Hard coding for now because of compatbility.
-        container = "snakemake/snakemake:v7.30.1"
+        container = "vanessa/snakemake:kueue"
 
         # Add the run and push command
         command = " && ".join(
@@ -223,15 +206,14 @@ class KueueExecutor(RemoteExecutor):
                 command,
             ]
         )
+        envars = self.workflow.spawned_job_args_factory.envvars()
 
         # Generate the job first
         spec = crd.generate(
             image=container,
             command="/bin/bash",
             args=["-c", command],
-            input_uris=input_uris,
-            output_uri=output_uri,
-            environment={},
+            environment=envars,
         )
 
         # We don't technically need to get it back, but
@@ -245,15 +227,14 @@ class KueueExecutor(RemoteExecutor):
             else f"--namespace {self.executor_settings.namespace} "
         )
         self.logger.info(
-            f'Use:\n"kubectl get {namespace}queue" to see queue assignment\n"kubectl get {namespace} jobs" to see jobs'
+            f"Use:\n'kubectl get {namespace}queue' to see queue assignment"
+            "'kubectl get {namespace} jobs' to see jobs'"
         )
 
         # Save aux metadata and report job submission
         aux = {
             "crd": crd,
             "kueue_logfile": logfile,
-            "output_uri": output_uri,
-            "input_uris": input_uris,
             "spec": spec,
             "result": result,
         }
@@ -272,22 +253,6 @@ class KueueExecutor(RemoteExecutor):
             self._workflow_uid = hasher.hexdigest()
         return self._workflow_uid
 
-    def upload_workdir(self):
-        """
-        Upload the first cache of the working directory.
-
-        ORAS (python) is required.
-        """
-        container = f"snakemake/{self.workflow_uid}:latest"
-        self.oras.push(container)
-
-    def update_workdir(self, job):
-        """
-        Update the working directory with a pull of the container
-        from the registry. We need to port forward to access the service.
-        """
-        self.oras.pull(job.aux["output_uri"])
-
     async def check_active_jobs(
         self, active_jobs: List[SubmittedJobInfo]
     ) -> Generator[SubmittedJobInfo, None, None]:
@@ -304,7 +269,12 @@ class KueueExecutor(RemoteExecutor):
 
             if status == cr.JobStatus.FAILED:
                 # Retrieve the job log and write to file
-                crd.write_log(logfile)
+                # An error usually means it's not done creating yet
+                # We can likely better handle this under custom resources
+                try:
+                    crd.write_log(logfile)
+                except Exception:
+                    time.sleep(5)
                 crd.cleanup()
 
                 # Tell the user about it
@@ -314,8 +284,11 @@ class KueueExecutor(RemoteExecutor):
 
             # Finished and success!
             elif status == cr.JobStatus.SUCCEEDED:
-                crd.write_log(logfile)
-                self.update_workdir(j)
+                try:
+                    crd.write_log(logfile)
+                except Exception:
+                    time.sleep(5)
+                self.last_job = j
 
                 # Finished and success!
                 self.report_job_success(j)
