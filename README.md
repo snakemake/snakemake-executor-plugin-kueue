@@ -83,12 +83,12 @@ The [Dockerfile](Dockerfile) is packaged here if you'd like to tweak it, e.g.,
 
 ```yaml
 rule hello_world:
-	output:
-		"...",
-	resources: 
-		container="ghcr.io/rse-ops/mamba:snakemake",
-		kueue_operator="job"
-	shell:
+    output:
+        "...",
+    resources: 
+        container="ghcr.io/rse-ops/mamba:snakemake",
+        kueue_operator="job"
+    shell:
         "..."
 ```
 
