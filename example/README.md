@@ -3,4 +3,4 @@
 The following examples demonstrate using the kueue plugin.
 
  - [hello-world](hello-world): a basic getting started workflow.
- - [snakemake-tutorial](snakemake-tutorial): the official Snakemake tutorial with data
+ - [flux-operator](flux-operator): An example of using the flux operator to run MPI jobs

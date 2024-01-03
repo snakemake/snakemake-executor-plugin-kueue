@@ -117,12 +117,17 @@ class KueueExecutor(RemoteExecutor):
             ]
         )
 
+        # These are bugs for the time being, the new storage plugins
+        # have some work to do (Google Storage is my fault!)
         removes = [
             "--storage-s3-retries 5",
+            "--storage-gs-keep-local False",
+            "--storage-gs-stay-on-remote False",
+            "--storage-gs-retries 5",
+            "--shared-fs-usage 'none'",
         ]
         for remove in removes:
             args = args.replace(remove, "")
-
         return args
 
     def get_job_args(self, job: JobExecutorInterface, **kwargs):
@@ -177,9 +182,11 @@ class KueueExecutor(RemoteExecutor):
         self.logger.debug(command)
 
         # First preference to job container, then executor settings, then default
+        # Hard coding in custom build as default for compatibility issues
         container = (
             job.resources.get("container")
             or self.executor_settings.container
+            or "vanessa/snakemake:kueue"
             or get_container_image()
         )
 
@@ -195,9 +202,6 @@ class KueueExecutor(RemoteExecutor):
             raise WorkflowError(
                 "Currently only kueue_operator: job is supported under resources."
             )
-
-        # Hard coding for now because of compatbility.
-        container = "vanessa/snakemake:kueue"
 
         # Add the run and push command
         command = " && ".join(
@@ -222,13 +226,13 @@ class KueueExecutor(RemoteExecutor):
 
         # Tell the user how to debug or interact with kubectl
         namespace = (
-            ""
+            " "
             if self.executor_settings.namespace == "default"
-            else f"--namespace {self.executor_settings.namespace} "
+            else f" --namespace {self.executor_settings.namespace} "
         )
         self.logger.info(
-            f"Use:\n'kubectl get {namespace}queue' to see queue assignment"
-            "'kubectl get {namespace} jobs' to see jobs'"
+            f"Use:\n'kubectl get{namespace}queue' to see queue assignment "
+            f"'kubectl get{namespace}jobs' to see jobs'"
         )
 
         # Save aux metadata and report job submission
@@ -263,7 +267,7 @@ class KueueExecutor(RemoteExecutor):
             logfile = j.aux["kueue_logfile"]
             aux_logs = [logfile]
 
-            self.logger.debug("Checking status for job {}".format(crd.jobname))
+            self.logger.debug(f"Checking status for job {crd.jobname}")
             status = crd.status()
             print(status)
 
@@ -278,7 +282,7 @@ class KueueExecutor(RemoteExecutor):
                 crd.cleanup()
 
                 # Tell the user about it
-                msg = f"Kueue job '{j.external_jobid}' failed. "
+                msg = f"Kueue job '{j.external_jobid}' failed.\n    See {logfile}. "
                 self.report_job_error(j, msg=msg, aux_logs=aux_logs)
                 continue
 
