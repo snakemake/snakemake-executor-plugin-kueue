@@ -14,7 +14,7 @@ that has clones from main branches (as opposed to releases).
 You will need to create a cluster first. For local development we recommend [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installing-from-source):
 
 ```bash
-$ kind create cluster
+kind create cluster
 ```
 
 #### Install Kueue
@@ -36,9 +36,14 @@ kubectl  apply -f example/cluster-queue.yaml
 kubectl  apply -f example/resource-flavor.yaml 
 kubectl  apply -f example/user-queue.yaml 
 ```
+```console
+clusterqueue.kueue.x-k8s.io/cluster-queue created
+resourceflavor.kueue.x-k8s.io/default-flavor created
+localqueue.kueue.x-k8s.io/user-queue created
+```
 
-You'll also need kubernetes python installed, and of course Snakemake! Assuming you have snakemake and the plugin here installed, you should be good
-to go. Here is how I setup a local or development environment.
+You'll also need kubernetes python installed, and of course Snakemake! Assuming you have snakemake and the plugin here installed, you should be good to go.
+Here is how I setup a local or development environment.
 
 ```bash
 python -m venv env
@@ -46,7 +51,9 @@ source env/bin/activate
 pip install .
 ```
 
-Next go into an [example](example) directory to test out the Kueue executor.
+### Container
+
+Note that while Snakemake still has a lot of moving pieces, the default container is built from the [Dockerfile](Dockerfile) here and provided as `vanessa/snakemake:kueue` in the executor code. Next go into an [example](example) directory to test out the Kueue executor.
 
 ### Job Resources
 

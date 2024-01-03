@@ -34,6 +34,22 @@ class KubernetesObject:
     def cleanup(self):
         pass
 
+    def delete_pods(self, name):
+        """
+        Delete namespaced pods.
+        """
+        with client.ApiClient() as api_client:
+            api = client.CoreV1Api(api_client)
+            pods = api.list_namespaced_pod(
+                namespace=self.settings.namespace,
+                label_selector=f"job-name={name}",
+            )
+            for pod in pods.items:
+                api.delete_namespaced_pod(
+                    namespace=self.settings.namespace,
+                    name=pod.metadata.name,
+                )
+
     @property
     def snakefile_configmap(self):
         return self.jobprefix + "-snakefile"
@@ -128,13 +144,17 @@ class BatchJob(KubernetesObject):
 
     def cleanup(self):
         """
-        Cleanup, usually the config map.
+        Cleanup, usually the job and config map.
+
+        We do an extra check for the pods, sometimes I don't
+        see them deleted with the batch job.
         """
         batch_api = client.BatchV1Api()
         batch_api.delete_namespaced_job(
             name=self.jobname,
             namespace=self.settings.namespace,
         )
+        self.delete_pods(self.jobname)
         self.delete_snakemake_configmap()
 
     def submit(self, job):
@@ -153,7 +173,7 @@ class BatchJob(KubernetesObject):
         self.jobname = result.metadata.name
         return result
 
-    def write_log(self, logprefix):
+    def write_log(self, logfile):
         """
         Write the job output to a logfile.
 
@@ -168,15 +188,17 @@ class BatchJob(KubernetesObject):
                 namespace=self.settings.namespace,
                 label_selector=f"job-name={self.jobname}",
             )
+            # Write new file for the job if existed
+            utils.write_file(f"==== Job {self.jobname}\n", logfile)
             for pod in pods.items:
+                utils.append_file(f"==== Pod {pod.metadata.name}\n", logfile)
                 log = api.read_namespaced_pod_log(
                     name=pod.metadata.name,
                     namespace=self.settings.namespace,
                     container=self.jobprefix,
                 )
-                logfile = f"{logprefix}-{pod.metadata.name}.txt"
-                logger.debug(f"Writing output to {logfile}")
-                utils.write_file(log, logfile)
+                logger.debug(f"Writing output for {pod.metadata.name} to {logfile}")
+                utils.append_file(log, logfile)
 
     def generate(
         self,

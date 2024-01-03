@@ -50,6 +50,7 @@ common_settings = CommonSettings(
     # (cluster, cloud, etc.). Only Snakemake's standard execution
     # plugins (snakemake-executor-plugin-dryrun, snakemake-executor-plugin-local)
     # are expected to specify False here.
+    job_deploy_sources=True,
     non_local_exec=True,
     pass_default_storage_provider_args=True,
     implies_no_shared_fs=True,
