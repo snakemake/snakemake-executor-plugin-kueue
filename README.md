@@ -73,6 +73,19 @@ Note that while Snakemake still has a lot of moving pieces, the default containe
 
 ### Job Resources
 
+For the different options below, each is exposed as a step option (as shown) or a flag, which would be applied globally and take the format:
+
+```console
+--kueue-<option>
+
+# E.g., for pull_always:
+--kueue-pull-always yes
+```
+
+not all are supported for every operator. E.g., interactive mode is just for the Flux Operator,
+and some features are possible for other operators (but not implemented yet)! If there is a feature you want implemented or exposed,
+please [open an issue](https://github.com/snakemake/snakemake-executor-plugin-kueue/issues).
+
 #### Operator
 
 By default, Kueue will use a batchv1/Job for each step. However, you can
@@ -163,6 +176,55 @@ rule a:
     shell:
         "..."
 ```
+
+
+#### Nodes
+
+This should be the number of nodes (size) for the MiniCluster.
+
+```yaml
+rule a:
+    input:     ...
+    output:    ...
+    resources:
+        kueue_nodes=4
+    shell:
+        "..."
+```
+
+
+#### Pull Always
+
+This tells the Flux Operator to freshly pull containers. Note that this is only exposed for this operator, but is easy to add to the others too as
+the `imagePullPolicy` -> Always.
+
+```yaml
+rule a:
+    input:     ...
+    output:    ...
+    resources:
+        kueue_pull_always=yes
+    shell:
+        "..."
+```
+
+
+#### Flux Container Base
+
+It's important that the flux view (where Flux is installed from) has a view that matches the operating system you are using. By default we use an ubuntu:kammy image. You can see the views and containers available in [this repository](https://github.com/converged-computing/flux-views). 
+
+```yaml
+rule a:
+    input:     ...
+    output:    ...
+    resources:
+        kueue_flux_container="ghcr.io/converged-computing/flux-view-rocky:tag-9"
+        container="myname/myrockylinux:9"
+    shell:
+        "..."
+```
+
+The above would be used if you container is some rocky base.
 
 #### Interactive
 
