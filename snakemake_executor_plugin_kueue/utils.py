@@ -19,3 +19,14 @@ def read_file(filename):
     """
     with open(filename, "r") as fd:
         return fd.read()
+
+
+def write_script(content, path, hashbang="#!/bin/bash"):
+    """
+    Return code to write a file
+    """
+    return f"""cat <<EOF > {path}
+{hashbang}
+{content}
+EOF
+"""

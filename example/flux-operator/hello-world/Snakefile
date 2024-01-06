@@ -1,0 +1,19 @@
+# By convention, the first pseudorule should be called "all"
+# We're using the expand() function to create multiple targets
+rule all:
+	input:
+		expand(
+			"iter-{iter}/hello-operator.out",
+			iter = ['1', '2'],
+		),
+
+rule hello:
+	output:
+		"{iter}/hello-operator.out",
+	resources: 
+		kueue_operator="flux-operator"
+	shell:
+		"""
+		mkdir -p "{wildcards.iter}"
+		echo "hello-flux-operator!" > {output}
+		"""

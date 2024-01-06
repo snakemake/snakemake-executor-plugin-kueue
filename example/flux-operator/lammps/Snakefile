@@ -1,0 +1,25 @@
+# By convention, the first pseudorule should be called "all"
+# We're using the expand() function to create multiple targets
+# Each target will run an iteration of LAMMPS.
+# In Kubernetes this means two separate jobs
+rule all:
+	input:
+		expand(
+			"iter-{iter}/lammps.out",
+			iter = ['1', '2'],
+		),
+
+rule lammps:
+	output:
+		"{iter}/lammps.out",
+	resources: 
+		kueue_operator="flux-operator",
+		kueue_tasks=4,
+		kueue_memory="600Mi",
+		container="vanessa/snakemake:lammps",
+	shell:
+		"""
+		mkdir -p "{wildcards.iter}"		
+		flux submit --watch --out {output} --error {output} --ntasks 4 lmp -v x 2 -v y 2 -v z 2 -in in.reaxc.hns -nocite		
+		cat {output}
+		"""

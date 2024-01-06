@@ -23,7 +23,6 @@ class ExecutorSettings(ExecutorSettingsBase):
             "required": False,
         },
     )
-    # mpitune configurations are validated on c2 and c2d instances only.
     container: Optional[str] = field(
         default=None,
         metadata={
@@ -32,10 +31,50 @@ class ExecutorSettings(ExecutorSettingsBase):
             "required": False,
         },
     )
+    working_dir: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Working directory for job (defaults to unset)",
+            "env_var": False,
+            "required": False,
+        },
+    )
+    pull_always: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "For operators that allow it, always pull the container",
+            "env_var": False,
+            "required": False,
+        },
+    )
+    interactive: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Set interactive to True to debug your MiniCluster containers",
+            "env_var": False,
+            "required": False,
+        },
+    )
     namespace: Optional[str] = field(
         default="default",
         metadata={
             "help": "The namespace to submit jobs to (must exist)",
+            "env_var": False,
+            "required": False,
+        },
+    )
+    nodes: Optional[int] = field(
+        default=1,
+        metadata={
+            "help": "Number of nodes (size) for the Flux MiniCluster (defaults to 1)",
+            "env_var": False,
+            "required": False,
+        },
+    )
+    flux_container: Optional[str] = field(
+        default="ghcr.io/converged-computing/flux-view-ubuntu:tag-jammy",
+        metadata={
+            "help": "Flux view container (see converged-computing/flux-views).",
             "env_var": False,
             "required": False,
         },
