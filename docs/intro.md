@@ -1,0 +1,1 @@
+This is the [Kueue](https://kueue.sigs.k8s.io/docs/overview/) external executor plugin for snakemake.

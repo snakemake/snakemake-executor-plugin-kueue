@@ -27,6 +27,7 @@ class KubernetesObject:
         self.snakefile = snakefile
         self.settings = settings
         self.jobname = None
+        self.snakefile_dir = "/snakemake_workdir"
 
     def write_log(self, logfile):
         pass
@@ -240,10 +241,10 @@ class BatchJob(KubernetesObject):
             name=self.jobprefix,
             command=[command],
             args=args,
-            working_dir="/workdir",
+            working_dir=self.settings.working_dir,
             volume_mounts=[
                 client.V1VolumeMount(
-                    mount_path="/snakemake_workdir",
+                    mount_path=self.snakefile_dir,
                     name="snakefile-mount",
                 ),
                 client.V1VolumeMount(
@@ -350,7 +351,6 @@ class FluxMiniCluster(BatchJob):
             namespace=self.settings.namespace,
             plural=self.plural,
         )
-        self.delete_pods(self.jobname)
         self.delete_snakemake_configmap()
         return result
 
@@ -364,23 +364,41 @@ class FluxMiniCluster(BatchJob):
     ):
         """
         Generate the MiniCluster crd.spec
-
-        # TODO add ability to customize working directory
         """
         deadline = self.job.resources.get("runtime")
         cores = self.job.resources.get("_cores")
         nodes = self.job.resources.get("_nodes")
         memory = self.job.resources.get("kueue_memory", "200Mi") or "200Mi"
-        tasks = self.job.resources.get("kueue.tasks", 1) or 1
+        tasks = self.job.resources.get("kueue_tasks", 1) or 1
 
+        # For the minicluster we split the command into sections
+        # command is /bin/bash
+        # args 0 is -c
+        # args 1 is the snakemake string
+        # We want to assemble into pre blocks and then the command
+        parts = [x.strip() for x in args[1].split("&") if x.strip()]
+        flux_submit = parts[-1]
+
+        # write to this filename to make easier
+        filename = "/tmp/run-job.sh"
+
+        # Write the entire script to file to make it easier to run
+        submit_file = utils.write_script(flux_submit, filename)
+        source_flux = [". /mnt/flux/flux-view.sh", "export FLUX_URI=$fluxsocket"]
+        parts = source_flux + parts[:-1] + [submit_file] + [f"cat {filename}"]
+
+        # Try getting rid of /bin/bash -c
         container = {
-            "command": command + " " + " ".join(args),
-            "working_dir": "/workdir",
+            "command": f"/bin/bash {filename}",
+            "pullAlways": self.settings.pull_always is not None,
+            "commands": {"pre": "\n".join(parts)},
+            "working_dir": self.settings.working_dir,
             "environment": environment,
+            "launcher": True,
             "image": image,
             "volumes": {
                 self.snakefile_configmap: {
-                    "path": "/workdir",
+                    "path": self.snakefile_dir,
                     "configMapName": self.snakefile_configmap,
                     "items": {"snakefile": "Snakefile"},
                 }
@@ -389,7 +407,11 @@ class FluxMiniCluster(BatchJob):
                 "limits": {
                     "cpu": cores,
                     "memory": memory,
-                }
+                },
+                "requests": {
+                    "cpu": cores,
+                    "memory": memory,
+                },
             },
         }
         minicluster = {
@@ -401,9 +423,11 @@ class FluxMiniCluster(BatchJob):
             },
             "spec": {
                 "job_labels": {"kueue.x-k8s.io/queue-name": self.settings.queue_name},
+                "flux": {"container": {"image": self.settings.flux_container}},
                 "containers": [container],
+                "interactive": self.settings.interactive is not None,
                 "size": nodes,
-                "tasks": tasks,
+                "tasks": int(tasks),
                 "logging": {"quiet": False},
                 "pod": {
                     "annotations": self.prepare_annotations(),

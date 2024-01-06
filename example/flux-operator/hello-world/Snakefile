@@ -1,16 +1,15 @@
 # By convention, the first pseudorule should be called "all"
 # We're using the expand() function to create multiple targets
-# Each target will run an iteration of LAMMPS
 rule all:
 	input:
 		expand(
-			"iter-{iter}/lammps.out",
+			"iter-{iter}/hello-operator.out",
 			iter = ['1', '2'],
 		),
 
-rule lammps:
+rule hello:
 	output:
-		"{iter}/lammps.out",
+		"{iter}/hello-operator.out",
 	resources: 
 		kueue_operator="flux-operator"
 	shell:
