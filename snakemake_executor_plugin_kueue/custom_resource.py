@@ -123,7 +123,7 @@ class BatchJob(KubernetesObject):
         try:
             job = batch_api.read_namespaced_job(self.jobname, self.settings.namespace)
         except Exception as e:
-            print(str(e))
+            logger.debug(str(e))
             return JobStatus.PENDING
 
         # Any failure consider the job a failure
@@ -168,7 +168,6 @@ class BatchJob(KubernetesObject):
 
         # Create a config map for the Snakefile
         self.create_snakemake_configmap()
-
         result = batch_api.create_namespaced_job(self.settings.namespace, job)
         self.jobname = result.metadata.name
         return result
@@ -266,6 +265,7 @@ class BatchJob(KubernetesObject):
             container.active_deadline_seconds = deadline
 
         # Prepare volumes (with config map)
+        # TODO add volume to minicluster
         volumes = [
             client.V1Volume(
                 name="snakefile-mount",
@@ -308,24 +308,50 @@ class BatchJob(KubernetesObject):
         )
 
 
-class FluxMiniCluster(KubernetesObject):
+class FluxMiniCluster(BatchJob):
     """
     A Flux MiniCluster CRD
     """
+
+    version = "v1alpha2"
+    group = "flux-framework.org"
+    plural = "miniclusters"
+    kind = "MiniCluster"
+
+    @property
+    def api_version(self):
+        return f"{self.group}/{self.version}"
 
     def submit(self, job):
         """
         Receive the job back and submit it.
         """
         crd_api = client.CustomObjectsApi()
+        self.create_snakemake_configmap()
         result = crd_api.create_namespaced_custom_object(
-            group="flux-framework.org",
-            version="v1alpha1",
+            group=self.group,
+            version=self.version,
             namespace=self.settings.namespace,
-            plural="miniclusters",
+            plural=self.plural,
             body=job,
         )
-        self.jobname = result.metadata.name
+        self.jobname = result["metadata"]["name"]
+        return result
+
+    def cleanup(self):
+        """
+        Cleanup the minicluster
+        """
+        crd_api = client.CustomObjectsApi()
+        result = crd_api.delete_namespaced_custom_object(
+            name=self.jobname,
+            group=self.group,
+            version=self.version,
+            namespace=self.settings.namespace,
+            plural=self.plural,
+        )
+        self.delete_pods(self.jobname)
+        self.delete_snakemake_configmap()
         return result
 
     def generate(
@@ -333,58 +359,58 @@ class FluxMiniCluster(KubernetesObject):
         image,
         command,
         args,
-        working_dir=None,
         deadline=None,
         environment=None,
     ):
         """
         Generate the MiniCluster crd.spec
+
+        # TODO add ability to customize working directory
         """
-        print("GENERATE MINICLUSTER")
-        import IPython
-
-        IPython.embed()
-
-        import fluxoperator.models as models
-
         deadline = self.job.resources.get("runtime")
         cores = self.job.resources.get("_cores")
         nodes = self.job.resources.get("_nodes")
-        memory = self.job.resources.get("kueue.memory", "200M1") or "200M1"
+        memory = self.job.resources.get("kueue_memory", "200Mi") or "200Mi"
         tasks = self.job.resources.get("kueue.tasks", 1) or 1
 
-        container = models.MiniClusterContainer(
-            command=command + " " + " ".join(args),
-            environment=environment,
-            image=image,
-            resources={
+        container = {
+            "command": command + " " + " ".join(args),
+            "working_dir": "/workdir",
+            "environment": environment,
+            "image": image,
+            "volumes": {
+                self.snakefile_configmap: {
+                    "path": "/workdir",
+                    "configMapName": self.snakefile_configmap,
+                    "items": {"snakefile": "Snakefile"},
+                }
+            },
+            "resources": {
                 "limits": {
                     "cpu": cores,
                     "memory": memory,
                 }
             },
-        )
-
-        # For now keep logging verbose
-        spec = models.MiniClusterSpec(
-            job_labels={"kueue.x-k8s.io/queue-name": self.settings.queue_name},
-            pod_labels={"app": "registry"},
-            containers=[container],
-            working_dir=working_dir,
-            size=nodes,
-            tasks=tasks,
-            logging={"quiet": False},
-            pod={"annotations": self.prepare_annotations()},
-        )
+        }
+        minicluster = {
+            "apiVersion": self.api_version,
+            "kind": self.kind,
+            "metadata": {
+                "generateName": self.jobprefix,
+                "namespace": self.settings.namespace,
+            },
+            "spec": {
+                "job_labels": {"kueue.x-k8s.io/queue-name": self.settings.queue_name},
+                "containers": [container],
+                "size": nodes,
+                "tasks": tasks,
+                "logging": {"quiet": False},
+                "pod": {
+                    "annotations": self.prepare_annotations(),
+                    "labels": {"app": "registry"},
+                },
+            },
+        }
         if deadline:
-            spec.deadline = deadline
-
-        return models.MiniCluster(
-            kind="MiniCluster",
-            api_version="flux-framework.org/v1alpha1",
-            metadata=client.V1ObjectMeta(
-                generate_name=self.jobname,
-                namespace=self.settings.namespace,
-            ),
-            spec=spec,
-        )
+            minicluster["spec"]["deadline"] = deadline
+        return minicluster

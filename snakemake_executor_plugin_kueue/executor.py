@@ -198,9 +198,15 @@ class KueueExecutor(RemoteExecutor):
                 settings=self.executor_settings,
                 snakefile=self.get_original_snakefile(),
             )
+        elif operator_type == "flux-operator":
+            crd = cr.FluxMiniCluster(
+                job,
+                settings=self.executor_settings,
+                snakefile=self.get_original_snakefile(),
+            )
         else:
             raise WorkflowError(
-                "Currently only kueue_operator: job is supported under resources."
+                "Currently only kueue_operator: job or flux-operator are supported."
             )
 
         # Add the run and push command

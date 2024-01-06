@@ -1,0 +1,20 @@
+# By convention, the first pseudorule should be called "all"
+# We're using the expand() function to create multiple targets
+# Each target will run an iteration of LAMMPS
+rule all:
+	input:
+		expand(
+			"iter-{iter}/lammps.out",
+			iter = ['1', '2'],
+		),
+
+rule lammps:
+	output:
+		"{iter}/lammps.out",
+	resources: 
+		kueue_operator="flux-operator"
+	shell:
+		"""
+		mkdir -p "{wildcards.iter}"
+		echo "hello-flux-operator!" > {output}
+		"""
