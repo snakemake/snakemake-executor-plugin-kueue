@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "snakemake-executor-plugin-kueue"
-version = "0.1.0"
+version = "0.2.0"
 description = ""
 authors = ["vsoch <vsoch@users.noreply.github.com>"]
 readme = "README.md"
