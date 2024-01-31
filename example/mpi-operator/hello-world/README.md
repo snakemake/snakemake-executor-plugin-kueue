@@ -18,8 +18,6 @@ pip install .
 
 You will still need to choose a storage provider for output files. And then:
 
-TODO STOPPED HERE - need to debug mount of snakefile.
-
 ```bash
 snakemake --cores 1 --executor kueue --jobs 1 --default-storage-provider s3 --default-storage-prefix s3://snakemake-testing-llnl --kueue-working-dir=/tmp
 ```

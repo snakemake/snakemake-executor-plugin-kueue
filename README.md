@@ -69,7 +69,7 @@ pip install .
 
 ### Container
 
-Note that while Snakemake still has a lot of moving pieces, the default container is built from the [Dockerfile](Dockerfile) here and provided as `vanessa/snakemake:kueue` in the executor code. Next go into an [example](example) directory to test out the Kueue executor.
+Note that while Snakemake still has a lot of moving pieces, the default container is built from the [Dockerfile](Dockerfile) here and provided as `vanessa/snakemake:kueue` in the executor code. Next go into an [example](example) directory to test out the Kueue executor. Note that if you use the mpi-operator you are required to have ssh installed in the container, as this is how the worker communicates with the launcher.
 
 ### Job Resources
 

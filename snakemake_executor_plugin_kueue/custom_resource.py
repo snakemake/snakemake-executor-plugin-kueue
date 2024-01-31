@@ -498,11 +498,16 @@ class MPIOperator(CustomResource):
             labels={"kueue.x-k8s.io/queue-name": self.settings.queue_name},
             namespace=self.settings.namespace,
         )
+
+        # Add fu to the command
+        command = ["bash", "-cx", f". /etc/profile && {command}"]
+        print(command)
+
         # containers for launcher and worker
         launcher_container = client.V1Container(
             image=image,
             name="mpi-launcher",
-            command=[command],
+            command=command,
             args=args,
             env=envars,
             image_pull_policy=pull_policy,
@@ -531,10 +536,17 @@ class MPIOperator(CustomResource):
             name="mpi-worker",
             env=envars,
             command=["/usr/sbin/sshd"],
-            args=["-De", "-f", "/home/mpiuser/.sshd_config"],
+            args=["-De"],
             working_dir=self.settings.working_dir,
             image_pull_policy=pull_policy,
             security_context=client.V1SecurityContext(run_as_user=1000),
+            lifecycle=client.V1Lifecycle(
+                post_start={
+                    "exec":  client.V1ExecAction(
+                         command=["bash", "-c", "while ! bash -c \"</dev/tcp/localhost/22\" >/dev/null 2>&1; do sleep 0.1; done"]
+                    )
+                }
+            ),
             resources={
                 "limits": {
                     "cpu": cores,
@@ -595,8 +607,8 @@ class MPIOperator(CustomResource):
         # Create the jobspec
         jobspec = models.V2beta1MPIJobSpec(
             slots_per_worker=1,
-            run_policy=policy,
-            ssh_auth_mount_path="/home/mpiuser/.ssh",
+            run_policy=policy,            
+            ssh_auth_mount_path="/root/.ssh",
             mpi_replica_specs={"Launcher": launcher, "Worker": worker},
         )
 
