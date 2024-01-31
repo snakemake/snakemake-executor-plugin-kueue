@@ -204,10 +204,15 @@ class KueueExecutor(RemoteExecutor):
                 settings=self.executor_settings,
                 snakefile=self.get_original_snakefile(),
             )
-        else:
-            raise WorkflowError(
-                "Currently only kueue_operator: job or flux-operator are supported."
+        elif operator_type == "mpi-operator":
+            crd = cr.MPIOperator(
+                job,
+                settings=self.executor_settings,
+                snakefile=self.get_original_snakefile(),
             )
+        else:
+            operators = "job, mpi-operator, or flux-operator are supported"
+            raise WorkflowError(f"Currently only kueue_operator: {operators}.")
 
         # Add the run and push command
         command = " && ".join(

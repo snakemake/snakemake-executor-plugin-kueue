@@ -3,7 +3,9 @@ from enum import Enum
 from kubernetes import client, config
 from snakemake.logging import logger
 
+from snakemake.exceptions import WorkflowError
 import snakemake_executor_plugin_kueue.utils as utils
+import sys
 
 config.load_kube_config()
 
@@ -205,7 +207,6 @@ class BatchJob(KubernetesObject):
         image,
         command,
         args,
-        deadline=None,
         environment=None,
     ):
         """
@@ -309,15 +310,10 @@ class BatchJob(KubernetesObject):
         )
 
 
-class FluxMiniCluster(BatchJob):
+class CustomResource(BatchJob):
     """
-    A Flux MiniCluster CRD
+    An abstract base class for a custom resource.
     """
-
-    version = "v1alpha2"
-    group = "flux-framework.org"
-    plural = "miniclusters"
-    kind = "MiniCluster"
 
     @property
     def api_version(self):
@@ -327,17 +323,27 @@ class FluxMiniCluster(BatchJob):
         """
         Receive the job back and submit it.
         """
-        crd_api = client.CustomObjectsApi()
         self.create_snakemake_configmap()
-        result = crd_api.create_namespaced_custom_object(
+        try:
+            result = self._submit(job)
+        except Exception as e:
+            self.delete_snakemake_configmap()
+            raise WorkflowError(f"Issue creating job: {e}")
+        self.jobname = result["metadata"]["name"]
+        return result
+
+    def _submit(self, job):
+        """
+        Submit the job
+        """
+        crd_api = client.CustomObjectsApi()
+        return crd_api.create_namespaced_custom_object(
             group=self.group,
             version=self.version,
             namespace=self.settings.namespace,
             plural=self.plural,
             body=job,
         )
-        self.jobname = result["metadata"]["name"]
-        return result
 
     def cleanup(self):
         """
@@ -354,12 +360,22 @@ class FluxMiniCluster(BatchJob):
         self.delete_snakemake_configmap()
         return result
 
+
+class FluxMiniCluster(CustomResource):
+    """
+    A Flux MiniCluster CRD
+    """
+
+    version = "v1alpha2"
+    group = "flux-framework.org"
+    plural = "miniclusters"
+    kind = "MiniCluster"
+
     def generate(
         self,
         image,
         command,
         args,
-        deadline=None,
         environment=None,
     ):
         """
@@ -389,7 +405,7 @@ class FluxMiniCluster(BatchJob):
 
         # Try getting rid of /bin/bash -c
         container = {
-            "command": f"/bin/bash {filename}",
+            "command": f"{command} {filename}",
             "pullAlways": self.settings.pull_always is not None,
             "commands": {"pre": "\n".join(parts)},
             "working_dir": self.settings.working_dir,
@@ -438,3 +454,167 @@ class FluxMiniCluster(BatchJob):
         if deadline:
             minicluster["spec"]["deadline"] = deadline
         return minicluster
+
+
+class MPIOperator(CustomResource):
+    """
+    A MPI Operator CRD
+    """
+
+    version = "v2beta1"
+    group = "kubeflow.org"
+    plural = "mpijobs"
+    kind = "MPIJob"
+
+    def generate(
+        self,
+        image,
+        command,
+        args,
+        environment=None,
+    ):
+        """
+        Generate the MiniCluster crd.spec
+        """
+        try:
+            import mpijob.models as models
+        except Exception:
+            sys.exit("Please install the MPI Operator Python SDK (mpijob)")
+
+        envars = []
+        for key, val in environment.items():
+            envars.append({"name": key, "value": val})
+
+        cores = self.job.resources.get("_cores")
+        nodes = self.job.resources.get("_nodes")
+        memory = self.job.resources.get("kueue_memory", "200Mi") or "200Mi"
+
+        pull_policy = (
+            "Always" if self.settings.pull_always is not None else "IfNotPresent"
+        )
+
+        metadata = client.V1ObjectMeta(
+            generate_name=self.jobprefix,
+            labels={"kueue.x-k8s.io/queue-name": self.settings.queue_name},
+            namespace=self.settings.namespace,
+        )
+
+        # Add fu to the command
+        command = ["bash", "-cx", f". /etc/profile && {command}"]
+        print(command)
+
+        # containers for launcher and worker
+        launcher_container = client.V1Container(
+            image=image,
+            name="mpi-launcher",
+            command=command,
+            args=args,
+            env=envars,
+            image_pull_policy=pull_policy,
+            security_context=client.V1SecurityContext(run_as_user=1000),
+            working_dir=self.settings.working_dir,
+            resources={
+                "limits": {
+                    "cpu": cores,
+                    "memory": memory,
+                },
+                "requests": {
+                    "cpu": cores,
+                    "memory": memory,
+                },
+            },
+            volume_mounts=[
+                client.V1VolumeMount(
+                    mount_path=self.snakefile_dir,
+                    name=self.snakefile_configmap,
+                ),
+            ],
+        )
+
+        worker_container = client.V1Container(
+            image=image,
+            name="mpi-worker",
+            env=envars,
+            command=["/usr/sbin/sshd"],
+            args=["-De"],
+            working_dir=self.settings.working_dir,
+            image_pull_policy=pull_policy,
+            security_context=client.V1SecurityContext(run_as_user=1000),
+            lifecycle=client.V1Lifecycle(
+                post_start={
+                    "exec":  client.V1ExecAction(
+                         command=["bash", "-c", "while ! bash -c \"</dev/tcp/localhost/22\" >/dev/null 2>&1; do sleep 0.1; done"]
+                    )
+                }
+            ),
+            resources={
+                "limits": {
+                    "cpu": cores,
+                    "memory": memory,
+                },
+                "requests": {
+                    "cpu": cores,
+                    "memory": memory,
+                },
+            },
+        )
+
+        # Create the Launcher and worker replica specs
+        launcher = models.V2beta1ReplicaSpec(
+            replicas=1,
+            template=client.V1PodTemplateSpec(
+                spec=client.V1PodSpec(
+                    containers=[launcher_container],
+                    volumes=[
+                        client.V1ConfigMapVolumeSource(
+                            name=self.snakefile_configmap,
+                            items=[
+                                client.V1KeyToPath(
+                                    key="snakefile",
+                                    path="Snakefile",
+                                )
+                            ],
+                        ),
+                    ],
+                )
+            ),
+        )
+        worker = models.V2beta1ReplicaSpec(
+            replicas=nodes,
+            template=client.V1PodTemplateSpec(
+                spec=client.V1PodSpec(
+                    containers=[worker_container],
+                    volumes=[
+                        client.V1ConfigMapVolumeSource(
+                            name=self.snakefile_configmap,
+                            items=[
+                                client.V1KeyToPath(
+                                    key="snakefile",
+                                    path="Snakefile",
+                                )
+                            ],
+                        ),
+                    ],
+                )
+            ),
+        )
+
+        # runPolicy for jobspec
+        policy = models.V2beta1RunPolicy(
+            clean_pod_policy="Running", ttl_seconds_after_finished=60
+        )
+
+        # Create the jobspec
+        jobspec = models.V2beta1MPIJobSpec(
+            slots_per_worker=1,
+            run_policy=policy,            
+            ssh_auth_mount_path="/root/.ssh",
+            mpi_replica_specs={"Launcher": launcher, "Worker": worker},
+        )
+
+        return models.V2beta1MPIJob(
+            metadata=metadata,
+            api_version=self.api_version,
+            kind=self.kind,
+            spec=jobspec,
+        )
