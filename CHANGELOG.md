@@ -13,6 +13,18 @@ and **Merged pull requests**. Critical items to know are:
 
 The versions coincide with releases on pip. Only major versions will be released as tags on Github.
 
+## [0.2.0](https://github.com/snakemake/snakemake-executor-plugin-kueue/compare/v0.1.0...v0.2.0) (2024-03-21)
+
+
+### Features
+
+* add support for flux operator ([#6](https://github.com/snakemake/snakemake-executor-plugin-kueue/issues/6)) ([0d34929](https://github.com/snakemake/snakemake-executor-plugin-kueue/commit/0d34929efee17a2b8f2936f7683201644879d073))
+
+
+### Bug Fixes
+
+* underlying plugin argument for storage args removed ([#9](https://github.com/snakemake/snakemake-executor-plugin-kueue/issues/9)) ([c09bf0d](https://github.com/snakemake/snakemake-executor-plugin-kueue/commit/c09bf0d31992bb97f966b28baadf39882481e9cb))
+
 ## 0.1.0 (2024-01-03)
 
 
